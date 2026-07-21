@@ -1,5 +1,33 @@
 import { GROUP_SIZE, MIN_GROUP_SIZE } from "./config.js";
 
+/**
+ * Una misma persona puede estar apuntada al mismo jefe en diario Y en semanal.
+ * Son dos registros, pero UNA persona con UN inventario de llaves: si no se
+ * fusionan, cuenta doble para llenar el grupo y sus llaves se suman dos veces.
+ */
+export function dedupePool(pool) {
+  const porPersona = new Map();
+
+  for (const r of pool) {
+    const k = `${r.userId}|${r.boss}`;
+    const scopes = r.scopes ?? [r.scope];
+    const prev = porPersona.get(k);
+    if (!prev) {
+      porPersona.set(k, { ...r, scopes });
+      continue;
+    }
+    porPersona.set(k, {
+      ...prev,
+      need: Math.max(prev.need, r.need),        // le basta con la tarea más larga
+      keys: Math.max(prev.keys, r.keys),        // mismas llaves, no se suman
+      support: prev.support && r.support,       // solo es apoyo si lo es en todo
+      // Idempotente: pasarlo dos veces no debe perder los ámbitos.
+      scopes: [...new Set([...prev.scopes, ...scopes])],
+    });
+  }
+  return [...porPersona.values()];
+}
+
 const sumKeys = (regs) => regs.reduce((a, r) => a + r.keys, 0);
 const maxNeed = (regs) => Math.max(0, ...regs.map((r) => r.need));
 
@@ -10,11 +38,12 @@ const maxNeed = (regs) => Math.max(0, ...regs.map((r) => r.need));
  * @param {Array<{userId, boss, need, keys, support}>} pool
  * @returns {Array<{boss, members: string[], runs: number, keys: number}>}
  */
-export function matchPool(pool, opts = {}) {
+export function matchPool(poolBruto, opts = {}) {
   const size = opts.groupSize ?? GROUP_SIZE;
   const min = opts.minGroupSize ?? MIN_GROUP_SIZE;
   const out = [];
 
+  const pool = dedupePool(poolBruto);
   const bosses = [...new Set(pool.map((r) => r.boss))];
 
   for (const boss of bosses) {
@@ -98,18 +127,29 @@ export function keyPlan(regs, runs) {
   return pool.filter((p) => p.use > 0);
 }
 
-export const groupStats = (regs) => ({
-  runs: maxNeed(regs),
-  keys: sumKeys(regs),
-  deficit: Math.max(0, maxNeed(regs) - sumKeys(regs)),
-});
+export const groupStats = (regsBruto) => {
+  const regs = dedupePool(regsBruto);
+  return {
+    runs: maxNeed(regs),
+    keys: sumKeys(regs),
+    deficit: Math.max(0, maxNeed(regs) - sumKeys(regs)),
+    personas: regs.length,
+  };
+};
 
 /**
  * Elige a quién meter en un grupo que ya existe y sigue abierto.
  * Si al grupo le faltan llaves, prioriza a quien más aporte; si no,
  * a quien de verdad necesite el jefe.
  */
-export function pickForGroup(groupRegs, candidates, size = GROUP_SIZE) {
+export function pickForGroup(groupRegsBruto, candidatesBruto, size = GROUP_SIZE) {
+  const groupRegs = dedupePool(groupRegsBruto);
+  const dentro = new Set(groupRegs.map((r) => r.userId));
+
+  // Nunca se mete a alguien que ya está en el grupo (puede aparecer como
+  // candidato por su registro del otro ámbito).
+  const candidates = dedupePool(candidatesBruto).filter((r) => !dentro.has(r.userId));
+
   const libres = size - groupRegs.length;
   if (libres <= 0) return [];
 

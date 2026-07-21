@@ -6,7 +6,12 @@ import {
 	MATCH_ACROSS_SCOPES,
 } from "./config.js";
 import * as db from "./db.js";
-import { matchPool, pickForGroup, groupStats } from "./matchmaker.js";
+import {
+	matchPool,
+	pickForGroup,
+	groupStats,
+	dedupePool,
+} from "./matchmaker.js";
 import { groupEmbed, groupButtons, statusEmbed, statusButtons } from "./ui.js";
 import { panelMessage, bossSelect, regModal, modalValue } from "./panel.js";
 import {
@@ -25,15 +30,18 @@ import {
 
 /* ---------- emparejar, anunciar, disolver ---------- */
 
-export async function matchAndAnnounce(env, guildId) {
+/**
+ * Empareja y anuncia. Las llamadas a la API de Discord son lentas y Discord
+ * corta la interacción a los 3 segundos, así que si se pasa `ctx` se responde
+ * antes y los anuncios salen después con ctx.waitUntil().
+ */
+export async function matchAndAnnounce(env, guildId, ctx = null) {
 	const nuevos = [];
 	const ampliados = [];
 
-	// Barrido de seguridad: recalcula todos los grupos, también los cerrados,
-	// para arrastrar cualquier estado descuadrado de versiones anteriores.
-	for (const g of await db.allGroups(env.DB, guildId)) {
-		await db.resyncGroup(env.DB, guildId, g.id, GROUP_SIZE);
-	}
+	// Barrido de seguridad en 4 consultas: pone al día runs, llaves y estado de
+	// todos los grupos, incluidos los cerrados y los heredados de otra versión.
+	await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
 
 	// Diario y semanal van a la misma bolsa: una kill sirve para las dos tareas.
 	const bolsas = MATCH_ACROSS_SCOPES
@@ -51,15 +59,11 @@ export async function matchAndAnnounce(env, guildId) {
 			);
 
 			for (const c of elegidos) {
-				await db.addToGroup(
-					env.DB,
-					guildId,
-					c.scope,
-					group.id,
-					c.userId,
-					c.boss,
+				await db.addToGroup(env.DB, guildId, group.id, c.userId, c.boss);
+				// Fuera de la bolsa TODOS sus registros de ese jefe, no solo uno.
+				pool = pool.filter(
+					(r) => !(r.userId === c.userId && r.boss === c.boss),
 				);
-				pool = pool.filter((r) => r !== c);
 			}
 
 			// Se resincroniza siempre, entre gente o no: así un grupo que ya estaba
@@ -81,6 +85,7 @@ export async function matchAndAnnounce(env, guildId) {
 			const miembros = pool.filter(
 				(r) => g.members.includes(r.userId) && r.boss === g.boss,
 			);
+			if (!miembros.length) continue;
 			const creado = await db.createGroup(env.DB, guildId, miembros, g);
 			if (g.members.length >= GROUP_SIZE) {
 				await db.updateGroup(env.DB, creado.id, {
@@ -97,6 +102,17 @@ export async function matchAndAnnounce(env, guildId) {
 	const { announceChannelId } = await db.getConfig(env.DB, guildId);
 	if (!announceChannelId) return nuevos;
 
+	const anunciar = () => publicarAvisos(env, guildId, announceChannelId, nuevos, ampliados);
+	if (ctx) {
+		// Se responde ya y los mensajes salen justo después.
+		ctx.waitUntil(anunciar());
+		return nuevos;
+	}
+	await anunciar();
+	return nuevos;
+}
+
+async function publicarAvisos(env, guildId, announceChannelId, nuevos, ampliados) {
 	for (const g of nuevos) {
 		const { group, regs } = await db.getGroup(env.DB, guildId, g.id);
 		const msg = await sendMessage(env.DISCORD_TOKEN, announceChannelId, {
@@ -120,8 +136,6 @@ export async function matchAndAnnounce(env, guildId) {
 			allowed_mentions: { users: a.nuevos },
 		});
 	}
-
-	return nuevos;
 }
 
 async function refreshGroupMessage(env, guildId, groupId) {
@@ -157,7 +171,7 @@ async function limpiarYRecolocar(env, guildId) {
 
 /* ---------- registro (compartido por comando y panel) ---------- */
 
-async function registrar(env, guildId, uid, scope, boss, need, keys) {
+async function registrar(env, guildId, uid, scope, boss, need, keys, ctx) {
 	const support = need === 0;
 	await db.upsertReg(env.DB, guildId, scope, {
 		userId: uid,
@@ -172,7 +186,7 @@ async function registrar(env, guildId, uid, scope, boss, need, keys) {
 		? `Apuntado como **apoyo** para ${b.emoji} ${b.label} (${SCOPES[scope].label}) con 🔑 ${keys} ${b.key}.`
 		: `Registrado: ${b.emoji} **${b.label}** ×${need} (${SCOPES[scope].label}) con 🔑 ${keys} ${b.key}.`;
 
-	await matchAndAnnounce(env, guildId);
+	await matchAndAnnounce(env, guildId, ctx);
 
 	// Puede haber entrado en un grupo nuevo o en uno abierto que ya existía.
 	const tras = await db.getReg(env.DB, guildId, scope, uid, boss);
@@ -226,10 +240,16 @@ async function verMiSituacion(env, guildId, uid) {
 	const regs = await db.userRegs(env.DB, guildId, uid);
 	const grupos = [];
 	const cola = [];
+	const vistos = new Set();
+
+	// Se recalcula todo antes de enseñarlo: así nunca se muestra un estado viejo.
+	await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
+
 	for (const r of regs) {
 		if (r.groupId) {
-			// Antes de enseñarlo, se recalcula: así nunca se muestra un estado viejo.
-			await db.resyncGroup(env.DB, guildId, r.groupId, GROUP_SIZE);
+			// El mismo grupo puede llegar por dos registros (diario y semanal).
+			if (vistos.has(r.groupId)) continue;
+			vistos.add(r.groupId);
 			const g = await db.getGroup(env.DB, guildId, r.groupId);
 			if (g) grupos.push(g);
 		} else {
@@ -255,6 +275,7 @@ async function cmdBoss(i, env, ctx, support) {
 		o.jefe,
 		need,
 		o.llaves ?? 0,
+		ctx,
 	);
 	return reply(texto);
 }
@@ -325,7 +346,8 @@ async function cmdPanel(i, env) {
 
 /** Explica quién sigue en cola y por qué no se ha formado grupo. */
 async function resumenCola(env, guildId) {
-	const pool = await db.unassignedAll(env.DB, guildId);
+	// Deduplicado: quien esté apuntado en los dos ámbitos es una sola persona.
+	const pool = dedupePool(await db.unassignedAll(env.DB, guildId));
 	const porJefe = {};
 	for (const r of pool) (porJefe[r.boss] ??= []).push(r);
 
@@ -346,11 +368,11 @@ async function resumenCola(env, guildId) {
 	});
 }
 
-async function cmdEmparejar(i, env) {
+async function cmdEmparejar(i, env, ctx) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
 	if (!isAdmin(i, cfg.adminRoleIds)) return reply("Solo admins.");
 
-	const creados = await matchAndAnnounce(env, i.guild_id);
+	const creados = await matchAndAnnounce(env, i.guild_id, ctx);
 	const cola = await resumenCola(env, i.guild_id);
 
 	const grupos = (await db.allGroups(env.DB, i.guild_id)).map(
@@ -481,7 +503,7 @@ function onSelect(i) {
 	return json(regModal(scope, i.data.values[0]));
 }
 
-async function onModal(i, env) {
+async function onModal(i, env, ctx) {
 	const [, , scope, boss] = i.data.custom_id.split(":");
 	const need = Number.parseInt(modalValue(i, "cantidad"), 10);
 	const keys = Number.parseInt(modalValue(i, "llaves"), 10);
@@ -495,7 +517,7 @@ async function onModal(i, env) {
 		return reply("Esos números no me cuadran. Pon cifras, por ejemplo 2 y 1.");
 	}
 	return reply(
-		await registrar(env, i.guild_id, userId(i), scope, boss, need, keys),
+		await registrar(env, i.guild_id, userId(i), scope, boss, need, keys, ctx),
 	);
 }
 
@@ -520,7 +542,7 @@ async function onStatusButton(i, env, ctx) {
 		} else if (action === "done") {
 			await db.completeGroup(env.DB, gid, groupId);
 		} else if (action === "leave") {
-			await db.removeReg(env.DB, gid, g.group.scope, uid, g.group.boss);
+			await db.removeUserBoss(env.DB, gid, uid, g.group.boss);
 			await db.resyncGroup(env.DB, gid, groupId, GROUP_SIZE);
 		}
 		ctx.waitUntil(
@@ -573,7 +595,7 @@ async function onGroupButton(i, env, ctx) {
 	}
 
 	if (action === "leave") {
-		await db.removeReg(env.DB, gid, g.group.scope, uid, g.group.boss);
+		await db.removeUserBoss(env.DB, gid, uid, g.group.boss);
 		const res = await db.resyncGroup(env.DB, gid, groupId, GROUP_SIZE);
 		ctx.waitUntil(limpiarYRecolocar(env, gid));
 
@@ -609,6 +631,7 @@ async function handleInteraction(i, env, ctx) {
 	if (!i.guild_id)
 		return reply("Este bot solo funciona dentro de un servidor.");
 
+	await db.ensureSchema(env.DB);
 	await db.ensureGuild(env.DB, i.guild_id);
 	await db.applyResets(env.DB, i.guild_id);
 
@@ -627,7 +650,7 @@ async function handleInteraction(i, env, ctx) {
 	}
 
 	if (i.type === InteractionType.MODAL && i.data.custom_id.startsWith("m:")) {
-		return onModal(i, env);
+		return onModal(i, env, ctx);
 	}
 
 	return json({ type: CallbackType.DEFERRED_UPDATE });
@@ -650,12 +673,22 @@ export default {
 			return await handleInteraction(JSON.parse(body), env, ctx);
 		} catch (err) {
 			console.error(err);
-			return reply("Algo ha petado. Avisa a quien administra el bot.");
+			return reply(
+				`Algo ha petado. Avisa a quien administra el bot.\n\`\`\`${String(err?.message ?? err).slice(0, 300)}\`\`\``,
+			);
 		}
 	},
 
 	async scheduled(event, env, ctx) {
-		for (const { scopes, announceChannelId } of await db.applyResets(env.DB)) {
+		await db.ensureSchema(env.DB);
+		for (const {
+			guildId,
+			scopes,
+			announceChannelId,
+		} of await db.applyResets(env.DB)) {
+			// Un grupo mixto sobrevive al reset diario con sus miembros semanales:
+			// hay que recalcular runs, llaves y si sigue lleno.
+			await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
 			if (!announceChannelId) continue;
 			const nombres = scopes
 				.map((s) => SCOPES[s].label.toLowerCase())

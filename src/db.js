@@ -1,5 +1,69 @@
 import { dailyPeriodKey, weeklyPeriodKey } from "./time.js";
 
+/* ---------- esquema autorreparable ---------- */
+
+let esquemaOk = false;
+
+/**
+ * Crea lo que falte y añade columnas nuevas si no están. Así el bot no puede
+ * quedarse a medias por una migración sin aplicar: se arregla solo.
+ */
+export async function ensureSchema(db) {
+  if (esquemaOk) return;
+
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS guilds (
+      guild_id TEXT PRIMARY KEY,
+      announce_channel_id TEXT,
+      admin_role_ids TEXT NOT NULL DEFAULT '[]',
+      daily_period TEXT,
+      weekly_period TEXT)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      boss TEXT NOT NULL,
+      runs INTEGER NOT NULL,
+      keys INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      closed INTEGER NOT NULL DEFAULT 0,
+      locked INTEGER NOT NULL DEFAULT 0,
+      channel_id TEXT,
+      message_id TEXT)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS regs (
+      guild_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      boss TEXT NOT NULL,
+      need INTEGER NOT NULL DEFAULT 0,
+      keys INTEGER NOT NULL DEFAULT 0,
+      support INTEGER NOT NULL DEFAULT 0,
+      group_id INTEGER,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (guild_id, scope, user_id, boss))`),
+  ]);
+
+  // Columnas añadidas después del despliegue inicial.
+  const columnas = {
+    groups: { closed: "INTEGER NOT NULL DEFAULT 0", locked: "INTEGER NOT NULL DEFAULT 0" },
+  };
+  for (const [tabla, cols] of Object.entries(columnas)) {
+    const { results } = await db.prepare(`PRAGMA table_info(${tabla})`).all();
+    const existentes = new Set(results.map((c) => c.name));
+    for (const [nombre, tipo] of Object.entries(cols)) {
+      if (existentes.has(nombre)) continue;
+      try {
+        await db.prepare(`ALTER TABLE ${tabla} ADD COLUMN ${nombre} ${tipo}`).run();
+        console.log(`Esquema: añadida la columna ${tabla}.${nombre}`);
+      } catch (err) {
+        console.error(`No se pudo añadir ${tabla}.${nombre}:`, err.message);
+      }
+    }
+  }
+
+  esquemaOk = true;
+}
+
 const row2reg = (r) => ({
   userId: r.user_id,
   boss: r.boss,
@@ -123,13 +187,12 @@ export async function createGroup(db, guildId, miembros, g) {
     .first();
 
   const id = created.id;
+  const personas = [...new Set(miembros.map((r) => r.userId))];
   await db.batch(
-    miembros.map((r) =>
+    personas.map((uid) =>
       db
-        .prepare(
-          `UPDATE regs SET group_id=? WHERE guild_id=? AND scope=? AND user_id=? AND boss=?`
-        )
-        .bind(id, guildId, r.scope, r.userId, r.boss)
+        .prepare(`UPDATE regs SET group_id=? WHERE guild_id=? AND user_id=? AND boss=?`)
+        .bind(id, guildId, uid, g.boss)
     )
   );
   return { ...g, id, scope };
@@ -166,7 +229,7 @@ export async function completeGroup(db, guildId, groupId) {
 export async function allGroups(db, guildId) {
   const { results } = await db
     .prepare(
-      `SELECT g.*, COUNT(r.user_id) AS n
+      `SELECT g.*, COUNT(DISTINCT r.user_id) AS n
          FROM groups g LEFT JOIN regs r ON r.group_id = g.id
         WHERE g.guild_id = ?
         GROUP BY g.id
@@ -199,30 +262,93 @@ export async function dissolveAllGroups(db, guildId) {
   return grupos;
 }
 
+/**
+ * Recalcula TODOS los grupos del servidor de golpe. Sustituye a llamar a
+ * resyncGroup en bucle: 4 consultas en vez de 3 por grupo, que con muchos
+ * grupos se comía el límite de 3 segundos de Discord.
+ *
+ * Ojo: se cuenta gente distinta (COUNT DISTINCT), no filas, porque alguien
+ * apuntado en diario y semanal al mismo jefe son dos filas y una persona.
+ */
+export async function syncAllGroups(db, guildId, groupSize) {
+  const miembros = `(SELECT COUNT(DISTINCT user_id) FROM regs WHERE regs.group_id = groups.id)`;
+
+  await db.batch([
+    // Runs y llaves al día (llaves: una vez por persona, no por fila)
+    db
+      .prepare(
+        `UPDATE groups SET
+           runs = COALESCE((SELECT MAX(need) FROM regs WHERE regs.group_id = groups.id), 0),
+           keys = COALESCE((SELECT SUM(k) FROM
+                    (SELECT MAX(keys) AS k FROM regs
+                      WHERE regs.group_id = groups.id GROUP BY user_id)), 0)
+         WHERE guild_id = ?`
+      )
+      .bind(guildId),
+    // Lleno o bloqueado -> cerrado
+    db
+      .prepare(`UPDATE groups SET closed=1 WHERE guild_id=? AND closed=0 AND (locked=1 OR ${miembros} >= ?)`)
+      .bind(guildId, groupSize),
+    // Ya no está lleno y no lo cerrasteis a mano -> se reabre
+    db
+      .prepare(`UPDATE groups SET closed=0 WHERE guild_id=? AND closed=1 AND locked=0 AND ${miembros} < ?`)
+      .bind(guildId, groupSize),
+    // Sin nadie dentro -> se borra
+    db
+      .prepare(
+        `DELETE FROM groups WHERE guild_id=?
+           AND id NOT IN (SELECT group_id FROM regs WHERE group_id IS NOT NULL)`
+      )
+      .bind(guildId),
+  ]);
+}
+
 /** Grupos abiertos de un jefe, con su gente, para poder ampliarlos. */
 export async function openGroups(db, guildId) {
-  const { results } = await db
+  const { results: grupos } = await db
     .prepare(`SELECT * FROM groups WHERE guild_id=? AND closed=0`)
     .bind(guildId)
     .all();
+  if (!grupos.length) return [];
 
-  const out = [];
-  for (const g of results) {
-    const { results: miembros } = await db
-      .prepare(`SELECT * FROM regs WHERE group_id=?`)
-      .bind(g.id)
-      .all();
-    out.push({ group: g, regs: miembros.map(row2reg) });
+  // Una sola consulta para todos los miembros, en vez de una por grupo.
+  const { results: todos } = await db
+    .prepare(
+      `SELECT * FROM regs
+        WHERE guild_id=? AND group_id IN (SELECT id FROM groups WHERE guild_id=? AND closed=0)`
+    )
+    .bind(guildId, guildId)
+    .all();
+
+  const porGrupo = new Map();
+  for (const r of todos) {
+    if (!porGrupo.has(r.group_id)) porGrupo.set(r.group_id, []);
+    porGrupo.get(r.group_id).push(row2reg(r));
   }
-  return out;
+  return grupos.map((g) => ({ group: g, regs: porGrupo.get(g.id) ?? [] }));
 }
 
 /** Mete a alguien en un grupo ya existente. */
-export async function addToGroup(db, guildId, scope, groupId, userId, boss) {
+/**
+ * Mete a alguien en un grupo. Marca TODOS sus registros de ese jefe (diario y
+ * semanal), porque es una sola persona ocupando un solo hueco.
+ */
+export async function addToGroup(db, guildId, groupId, userId, boss) {
   await db
-    .prepare(`UPDATE regs SET group_id=? WHERE guild_id=? AND scope=? AND user_id=? AND boss=?`)
-    .bind(groupId, guildId, scope, userId, boss)
+    .prepare(`UPDATE regs SET group_id=? WHERE guild_id=? AND user_id=? AND boss=?`)
+    .bind(groupId, guildId, userId, boss)
     .run();
+}
+
+/** Saca a alguien de un jefe por completo (los dos ámbitos). */
+export async function removeUserBoss(db, guildId, userId, boss) {
+  const { results } = await db
+    .prepare(
+      `DELETE FROM regs WHERE guild_id=? AND user_id=? AND boss=? RETURNING scope, group_id`
+    )
+    .bind(guildId, userId, boss)
+    .all();
+  return results;
 }
 
 /** Actualiza runs/llaves y el estado de cierre. */
@@ -251,9 +377,16 @@ export async function resyncGroup(db, guildId, groupId, groupSize) {
     return { deleted: true, group: g.group };
   }
 
-  const runs = Math.max(0, ...g.regs.map((r) => r.need));
-  const keys = g.regs.reduce((a, r) => a + r.keys, 0);
-  const closed = !!g.group.locked || g.regs.length >= groupSize;
+  const porPersona = new Map();
+  for (const r of g.regs) {
+    const prev = porPersona.get(r.userId);
+    porPersona.set(r.userId, prev ? { need: Math.max(prev.need, r.need), keys: Math.max(prev.keys, r.keys) } : r);
+  }
+  const personas = [...porPersona.values()];
+
+  const runs = Math.max(0, ...personas.map((r) => r.need));
+  const keys = personas.reduce((a, r) => a + r.keys, 0);
+  const closed = !!g.group.locked || personas.length >= groupSize;
 
   await db
     .prepare(`UPDATE groups SET runs=?, keys=?, closed=? WHERE id=?`)
@@ -341,7 +474,7 @@ export async function dissolveGroup(db, guildId, groupId) {
 export async function undersizedGroups(db, guildId, min) {
   const { results } = await db
     .prepare(
-      `SELECT g.*, COUNT(r.user_id) AS n
+      `SELECT g.*, COUNT(DISTINCT r.user_id) AS n
          FROM groups g LEFT JOIN regs r ON r.group_id = g.id
         WHERE g.guild_id = ?
         GROUP BY g.id

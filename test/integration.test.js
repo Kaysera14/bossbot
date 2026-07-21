@@ -112,4 +112,105 @@ await matchAndAnnounce(env, G);
 assert.ok((await DB.prepare("SELECT COUNT(*) AS n FROM groups").first()).n > 0, "se vuelven a formar");
 console.log("✓ tras deshacerlos, /emparejar los rehace");
 
+/* --- 8. La misma persona apuntada al mismo jefe en diario Y semanal --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+await db.upsertReg(DB, G, "daily",  { userId: "K", boss: "sobek", need: 1, keys: 2 });
+await db.upsertReg(DB, G, "weekly", { userId: "K", boss: "sobek", need: 3, keys: 2 });
+await db.upsertReg(DB, G, "daily",  { userId: "W", boss: "sobek", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+
+const gs = await DB.prepare("SELECT * FROM groups WHERE boss='sobek'").first();
+const filas = (await DB.prepare("SELECT user_id FROM regs WHERE group_id=?").bind(gs.id).all()).results;
+const personas = new Set(filas.map((r) => r.user_id));
+
+assert.equal(personas.size, 2, "son 2 personas, no 3");
+assert.equal(gs.closed, 0, "con 2 personas el grupo sigue abierto aunque haya 3 filas");
+assert.equal(gs.keys, 3, "las llaves de K cuentan una vez (2), no dos (4)");
+assert.equal(gs.runs, 3, "las runs son las de la tarea más larga de cada uno");
+console.log("✓ diario + semanal de la misma persona = 1 hueco y 1 juego de llaves");
+
+// Y al entrar un tercero real, ahí sí se cierra
+await db.upsertReg(DB, G, "daily", { userId: "Z", boss: "sobek", need: 1, keys: 0 });
+await matchAndAnnounce(env, G);
+const gs2 = await DB.prepare("SELECT * FROM groups WHERE boss='sobek'").first();
+assert.equal(gs2.closed, 1, "con la tercera persona real sí se cierra");
+console.log("✓ y con la tercera persona real se cierra");
+
+// Al salirse, se le quitan los dos registros del jefe
+await db.removeUserBoss(DB, G, "K", "sobek");
+const quedan = (await DB.prepare("SELECT * FROM regs WHERE user_id='K' AND boss='sobek'").all()).results;
+assert.equal(quedan.length, 0, "salir quita el registro de los dos ámbitos");
+console.log("✓ salir de un grupo te quita de los dos ámbitos");
+
+/* --- 9. Base de datos sin la migración: el bot se repara solo --- */
+
+const schemaViejo = fs
+  .readFileSync("schema.sql", "utf8")
+  .replace(/\n\s*locked\s+INTEGER NOT NULL DEFAULT 0,/, "")
+  .replace(/\n\s*closed\s+INTEGER NOT NULL DEFAULT 0,/, "");
+const DB2 = makeD1(schemaViejo);
+const env2 = { DB: DB2, DISCORD_TOKEN: "fake" };
+
+await db.ensureSchema(DB2);
+const cols = (await DB2.prepare("PRAGMA table_info(groups)").all()).results.map((c) => c.name);
+assert.ok(cols.includes("closed") && cols.includes("locked"), "las columnas que faltaban se crean solas");
+
+await db.ensureGuild(DB2, G);
+await db.setConfig(DB2, G, { announceChannelId: "canal-1" });
+for (const [u, n, k] of [["P", 3, 1], ["Q", 2, 1], ["R", 1, 1]]) {
+  await db.upsertReg(DB2, G, "daily", { userId: u, boss: "kronos", need: n, keys: k });
+}
+await matchAndAnnounce(env2, G);
+const gk = await DB2.prepare("SELECT * FROM groups WHERE boss='kronos'").first();
+assert.equal(gk.closed, 1, "sobre una base sin migrar, el grupo de 3 se cierra igual");
+console.log("✓ una base de datos sin migrar se repara sola y funciona");
+
+/* --- 10. Reset diario con un grupo mixto --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+await db.upsertReg(DB, G, "weekly", { userId: "M1", boss: "mesines", need: 4, keys: 2 });
+await db.upsertReg(DB, G, "daily",  { userId: "M2", boss: "mesines", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+const gm = await DB.prepare("SELECT * FROM groups WHERE boss='mesines'").first();
+assert.ok(gm, "grupo mixto creado");
+
+// Llega el reset diario: se van los registros diarios, el grupo debe seguir
+await db.wipeScope(DB, G, "daily");
+await db.syncAllGroups(DB, G, 3);
+const gm2 = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(gm.id).first();
+assert.ok(gm2, "el grupo mixto sobrevive al reset diario");
+assert.equal(gm2.runs, 4, "las runs se recalculan con quien queda");
+assert.equal(gm2.keys, 2, "y las llaves también");
+console.log("✓ el reset diario no se lleva por delante un grupo mixto");
+
+// Si el reset deja el grupo sin nadie, desaparece
+await db.wipeScope(DB, G, "weekly");
+await db.syncAllGroups(DB, G, 3);
+const gm3 = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(gm.id).first();
+assert.equal(gm3, null, "sin nadie dentro, el grupo se borra");
+console.log("✓ un grupo que se queda vacío tras el reset se borra");
+
+/* --- 11. Los anuncios no bloquean la respuesta (ctx.waitUntil) --- */
+
+await DB.prepare("DELETE FROM regs").run();
+const pendientes = [];
+const ctxFalso = { waitUntil: (p) => pendientes.push(p) };
+
+await db.upsertReg(DB, G, "daily", { userId: "T1", boss: "griffin", need: 2, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "T2", boss: "griffin", need: 1, keys: 1 });
+
+const antesDeAnunciar = enviados.length;
+await matchAndAnnounce(env, G, ctxFalso);
+assert.equal(enviados.length, antesDeAnunciar, "no se ha llamado a Discord todavía");
+assert.equal(pendientes.length, 1, "el anuncio queda diferido");
+
+await Promise.all(pendientes);
+assert.ok(enviados.length > antesDeAnunciar, "y se envía después de responder");
+console.log("✓ los anuncios salen después de responder, no antes");
+
 console.log("\nTodo OK");

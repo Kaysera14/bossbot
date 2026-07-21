@@ -1,13 +1,16 @@
 import { BOSSES, SCOPES, GROUP_SIZE } from "./config.js";
-import { keyPlan, groupStats } from "./matchmaker.js";
+import { keyPlan, groupStats, dedupePool } from "./matchmaker.js";
 import { nextDailyReset, discordTime } from "./time.js";
 
 const VERDE = 0x2b9348;
 const AMBAR = 0xd9822b;
 const AZUL = 0x4a6fa5;
 
-export function groupEmbed(groupId, boss, regs, closed = false) {
+export function groupEmbed(groupId, boss, regsBruto, closed = false) {
 	const b = BOSSES[boss];
+	// Una persona apuntada en diario y semanal son dos filas: se fusionan para
+	// no contarla dos veces ni duplicar sus llaves.
+	const regs = dedupePool(regsBruto);
 	const { runs, keys, deficit } = groupStats(regs);
 	const plan = keyPlan(regs, runs);
 
@@ -23,7 +26,7 @@ export function groupEmbed(groupId, boss, regs, closed = false) {
 				regs
 					.map(
 						(r) =>
-							`• <@${r.userId}> ${SCOPES[r.scope]?.emoji ?? ""} — ` +
+							`• <@${r.userId}> ${(r.scopes ?? [r.scope]).map((sc) => SCOPES[sc]?.emoji ?? "").join("")} — ` +
 							`${r.support ? "apoyo" : `${r.need} kill${r.need === 1 ? "" : "s"}`} · 🔑 ${r.keys}`,
 					)
 					.join("\n") || "—",
@@ -129,7 +132,8 @@ export function statusButtons(grupos) {
 export function statusEmbed(uid, grupos, cola) {
 	const fields = [];
 
-	for (const { group, regs } of grupos) {
+	for (const { group, regs: regsBruto } of grupos) {
+		const regs = dedupePool(regsBruto);
 		const b = BOSSES[group.boss];
 		const { runs, deficit } = groupStats(regs);
 		const yo = regs.find((r) => r.userId === uid);

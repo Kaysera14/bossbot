@@ -70,12 +70,9 @@ tablas:
 npm run db:init
 ```
 
-Si ya tenías el bot desplegado de antes, aplica también las migraciones:
-
-```bash
-npx wrangler d1 execute bossbot --remote --file=migrations/001_grupos_abiertos.sql
-npx wrangler d1 execute bossbot --remote --file=migrations/002_bloqueo_manual.sql
-```
+No hace falta aplicar migraciones a mano: al arrancar, el bot comprueba el
+esquema y añade las columnas que falten (`ensureSchema` en `src/db.js`). Los
+`.sql` de la raíz quedan como documentación de qué cambió y cuándo.
 
 ### 4. Secretos y despliegue
 
