@@ -1,0 +1,18 @@
+{
+  "name": "idleclans-boss-bot-worker",
+  "version": "2.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute bossbot --remote --file=schema.sql",
+    "db:init:local": "wrangler d1 execute bossbot --local --file=schema.sql",
+    "commands": "node scripts/deploy-commands.js",
+    "test": "node test/logic.test.js && node test/integration.test.js",
+    "db:migrate": "wrangler d1 execute bossbot --remote --file=migrations/002_bloqueo_manual.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^3.99.0"
+  }
+}

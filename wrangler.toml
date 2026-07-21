@@ -1,0 +1,14 @@
+name = "idleclans-boss-bot"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# El reset real se decide comparando el "periodo" de cada servidor, así que
+# no hace falta que el cron caiga exactamente a las 02:00: con pasar cada
+# 10 minutos basta, y así el cambio de horario de verano da igual.
+[triggers]
+crons = ["*/10 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bossbot"
+database_id = "addc973c-01aa-4557-acfd-c4e17693480e"
