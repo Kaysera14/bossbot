@@ -262,6 +262,15 @@ export async function dissolveAllGroups(db, guildId) {
   return grupos;
 }
 
+/** IDs de los grupos abiertos, para detectar cuáles se cierran después. */
+export async function openGroupIds(db, guildId) {
+  const { results } = await db
+    .prepare(`SELECT id FROM groups WHERE guild_id=? AND closed=0`)
+    .bind(guildId)
+    .all();
+  return new Set(results.map((r) => r.id));
+}
+
 /**
  * Recalcula TODOS los grupos del servidor de golpe. Sustituye a llamar a
  * resyncGroup en bucle: 4 consultas en vez de 3 por grupo, que con muchos

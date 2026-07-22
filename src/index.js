@@ -11,8 +11,15 @@ import {
 	pickForGroup,
 	groupStats,
 	dedupePool,
+	keyPlan,
 } from "./matchmaker.js";
-import { groupEmbed, groupButtons, statusEmbed, statusButtons } from "./ui.js";
+import {
+	groupEmbed,
+	groupButtons,
+	statusEmbed,
+	statusButtons,
+	openRequestsEmbed,
+} from "./ui.js";
 import { panelMessage, bossSelect, regModal, modalValue } from "./panel.js";
 import {
 	verifyRequest,
@@ -38,6 +45,11 @@ import {
 export async function matchAndAnnounce(env, guildId, ctx = null) {
 	const nuevos = [];
 	const ampliados = [];
+
+	// Foto de qué grupos estaban abiertos antes de tocar nada: al final se
+	// comparan los estados para avisar de TODOS los que se hayan completado,
+	// se hayan llenado por el barrido, por una alta o por un cierre manual.
+	const abiertosAntes = await db.openGroupIds(env.DB, guildId);
 
 	// Barrido de seguridad en 4 consultas: pone al día runs, llaves y estado de
 	// todos los grupos, incluidos los cerrados y los heredados de otra versión.
@@ -99,10 +111,18 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 		}
 	}
 
+	// Grupos que han pasado de abiertos a cerrados en esta pasada. Se excluyen
+	// los recién creados, que ya se anuncian con su propio mensaje.
+	const idsNuevos = new Set(nuevos.map((g) => g.id));
+	const completados = (await db.allGroups(env.DB, guildId))
+		.filter((g) => g.closed && abiertosAntes.has(g.id) && !idsNuevos.has(g.id))
+		.map((g) => g.id);
+
 	const { announceChannelId } = await db.getConfig(env.DB, guildId);
 	if (!announceChannelId) return nuevos;
 
-	const anunciar = () => publicarAvisos(env, guildId, announceChannelId, nuevos, ampliados);
+	const anunciar = () =>
+		publicarAvisos(env, guildId, announceChannelId, nuevos, ampliados, completados);
 	if (ctx) {
 		// Se responde ya y los mensajes salen justo después.
 		ctx.waitUntil(anunciar());
@@ -112,7 +132,14 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 	return nuevos;
 }
 
-async function publicarAvisos(env, guildId, announceChannelId, nuevos, ampliados) {
+async function publicarAvisos(
+	env,
+	guildId,
+	announceChannelId,
+	nuevos,
+	ampliados,
+	completados = [],
+) {
 	for (const g of nuevos) {
 		const { group, regs } = await db.getGroup(env.DB, guildId, g.id);
 		const msg = await sendMessage(env.DISCORD_TOKEN, announceChannelId, {
@@ -130,10 +157,30 @@ async function publicarAvisos(env, guildId, announceChannelId, nuevos, ampliados
 		if (!a.nuevos.length) continue; // solo se ha cerrado, no hay a quién avisar
 
 		await sendMessage(env.DISCORD_TOKEN, announceChannelId, {
-			content: a.lleno
-				? `🔒 Grupo #${a.id} completo: se une ${a.nuevos.map((u) => `<@${u}>`).join(" y ")}. ¡A por él!`
-				: `➕ ${a.nuevos.map((u) => `<@${u}>`).join(" y ")} se une al grupo #${a.id}.`,
+			content: `➕ ${a.nuevos.map((u) => `<@${u}>`).join(" y ")} se une al grupo #${a.id}.`,
 			allowed_mentions: { users: a.nuevos },
+		});
+	}
+
+	// Aviso de grupo completo, mencionando a TODOS sus miembros.
+	for (const id of completados) {
+		const g = await db.getGroup(env.DB, guildId, id);
+		if (!g) continue;
+
+		const miembros = [...new Set(g.regs.map((r) => r.userId))];
+		const b = BOSSES[g.group.boss];
+		const { runs } = groupStats(g.regs);
+		const plan = keyPlan(g.regs, runs);
+
+		await sendMessage(env.DISCORD_TOKEN, announceChannelId, {
+			content:
+				`🔒 **Grupo #${id} completo** — ${b.emoji} ${b.label}\n` +
+				`${miembros.map((u) => `<@${u}>`).join(" ")}\n` +
+				`Necesitáis **${runs}** run(s). ` +
+				(plan.length
+					? `Abre puertas: ${plan.map((p) => `<@${p.userId}> ×${p.use}`).join(", ")}.`
+					: "⚠️ Nadie tiene llaves: pedid una en el clan."),
+			allowed_mentions: { users: miembros },
 		});
 	}
 }
@@ -491,6 +538,12 @@ async function onPanel(i, env, ctx) {
 	if (action === "mine") {
 		const { embed, components } = await verMiSituacion(env, i.guild_id, uid);
 		return reply(null, { embeds: [embed], components });
+	}
+	if (action === "open") {
+		await db.syncAllGroups(env.DB, i.guild_id, GROUP_SIZE);
+		const abiertos = await db.openGroups(env.DB, i.guild_id);
+		const cola = await db.unassignedAll(env.DB, i.guild_id);
+		return reply(null, { embeds: [openRequestsEmbed(abiertos, cola)] });
 	}
 	if (action === "out")
 		return reply(await salirDeTodo(env, i.guild_id, uid, ctx));

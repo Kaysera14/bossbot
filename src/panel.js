@@ -11,6 +11,7 @@ export const panelMessage = () => ({
         "",
         "**Me faltan jefes** → dices qué jefe y cuántas kills te faltan.",
         "**Mi grupo** → con quién vas y si te toca abrir puerta.",
+        "**Ver abiertas** → grupos a los que aún puedes entrar y quién espera.",
         "**Hoy no puedo** → te saca de todos tus grupos de golpe.",
         "",
         `Los grupos son de ${GROUP_SIZE}. Se forman en cuanto hay gente y siguen abiertos hasta llenarse,`,
@@ -32,6 +33,7 @@ export const panelMessage = () => ({
       type: 1,
       components: [
         { type: 2, custom_id: "p:mine", label: "Mi grupo", emoji: { name: "👥" }, style: 2 },
+        { type: 2, custom_id: "p:open", label: "Ver abiertas", emoji: { name: "🔎" }, style: 2 },
         { type: 2, custom_id: "p:out", label: "Hoy no puedo", emoji: { name: "🚫" }, style: 4 },
       ],
     },

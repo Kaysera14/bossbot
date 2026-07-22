@@ -213,4 +213,74 @@ await Promise.all(pendientes);
 assert.ok(enviados.length > antesDeAnunciar, "y se envía después de responder");
 console.log("✓ los anuncios salen después de responder, no antes");
 
+/* --- 12. Aviso al completarse el grupo, venga por donde venga --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+const desde = (n) => enviados.slice(n).map((e) => e.body.content ?? "");
+
+let marca = enviados.length;
+await db.upsertReg(DB, G, "daily", { userId: "C1", boss: "devil", need: 2, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "C2", boss: "devil", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+assert.ok(
+  !desde(marca).some((t) => t.includes("completo")),
+  "con 2 aún no avisa de completo",
+);
+
+let antesAviso = enviados.length;
+await db.upsertReg(DB, G, "daily", { userId: "C3", boss: "devil", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+
+const aviso = enviados.slice(antesAviso).find((e) => (e.body.content ?? "").includes("completo"));
+assert.ok(aviso, "al llegar el tercero sale el aviso de grupo completo");
+for (const u of ["C1", "C2", "C3"]) {
+  assert.ok(aviso.body.content.includes(`<@${u}>`), `${u} está mencionado`);
+  assert.ok(aviso.body.allowed_mentions.users.includes(u), `${u} recibe ping de verdad`);
+}
+console.log("✓ aviso de grupo completo mencionando a los tres");
+
+// También cuando el cierre lo hace el barrido (grupo heredado, sin altas nuevas)
+await DB.prepare("UPDATE groups SET closed=0 WHERE boss='devil'").run();
+antesAviso = enviados.length;
+await matchAndAnnounce(env, G);
+assert.ok(
+  enviados.slice(antesAviso).some((e) => (e.body.content ?? "").includes("completo")),
+  "un grupo cerrado por el barrido también se avisa",
+);
+console.log("✓ también avisa si el grupo se cierra por el barrido");
+
+// Y no repite el aviso en la siguiente pasada
+antesAviso = enviados.length;
+await matchAndAnnounce(env, G);
+assert.ok(
+  !enviados.slice(antesAviso).some((e) => (e.body.content ?? "").includes("completo")),
+  "no se repite el aviso",
+);
+console.log("✓ y no lo repite en cada pasada");
+
+/* --- 13. Vista de solicitudes abiertas --- */
+
+const { openRequestsEmbed } = await import("../src/ui.js");
+
+// Un grupo abierto de 2 y alguien esperando a otro jefe
+await db.upsertReg(DB, G, "daily", { userId: "V1", boss: "medusa", need: 2, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "V2", boss: "medusa", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "weekly", { userId: "V3", boss: "griffin", need: 1, keys: 3 });
+await matchAndAnnounce(env, G);
+
+const emb = openRequestsEmbed(
+  await db.openGroups(DB, G),
+  await db.unassignedAll(DB, G),
+);
+assert.ok(emb.title.includes("Solicitudes abiertas"));
+
+const texto = JSON.stringify(emb.fields);
+assert.ok(texto.includes("Medusa"), "sale el grupo abierto de Medusa");
+assert.ok(texto.includes("<@V1>") && texto.includes("<@V2>"), "con sus miembros");
+assert.ok(texto.includes("falta 1"), "y cuánta gente falta");
+assert.ok(texto.includes("Griffin") && texto.includes("En cola"), "y quién espera solo");
+console.log("✓ solicitudes abiertas: grupos con hueco y gente en cola");
+
 console.log("\nTodo OK");

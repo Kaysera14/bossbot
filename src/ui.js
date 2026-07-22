@@ -190,3 +190,72 @@ export function statusEmbed(uid, grupos, cola) {
 		},
 	};
 }
+
+/**
+ * Vista de "solicitudes abiertas": grupos a los que aún se puede entrar y
+ * quién está esperando, agrupado por jefe.
+ */
+export function openRequestsEmbed(gruposAbiertos, cola) {
+	const porJefe = {};
+
+	for (const { group, regs } of gruposAbiertos) {
+		(porJefe[group.boss] ??= { grupos: [], espera: [] }).grupos.push({
+			group,
+			regs: dedupePool(regs),
+		});
+	}
+	for (const r of dedupePool(cola)) {
+		(porJefe[r.boss] ??= { grupos: [], espera: [] }).espera.push(r);
+	}
+
+	const fields = Object.entries(porJefe)
+		.slice(0, 25)
+		.map(([boss, { grupos, espera }]) => {
+			const b = BOSSES[boss];
+			const lineas = [];
+
+			for (const { group, regs } of grupos) {
+				const faltan = GROUP_SIZE - regs.length;
+				lineas.push(
+					`**#${group.id}** (${regs.length}/${GROUP_SIZE}) — ` +
+						`${regs.map((r) => `<@${r.userId}>`).join(", ")} · ` +
+						`falta${faltan === 1 ? "" : "n"} ${faltan}`,
+				);
+			}
+
+			if (espera.length) {
+				lineas.push(
+					`⏳ En cola: ${espera
+						.map(
+							(r) =>
+								`<@${r.userId}> (${r.support || r.need === 0 ? "apoyo" : `${r.need}`} · 🔑 ${r.keys})`,
+						)
+						.join(", ")}`,
+				);
+			}
+
+			return {
+				name: `${b.emoji} ${b.label}`,
+				value: lineas.join("\n").slice(0, 1024) || "—",
+			};
+		});
+
+	if (!fields.length) {
+		return {
+			title: "🔎 Solicitudes abiertas",
+			color: AZUL,
+			description:
+				"No hay ningún grupo abierto ni nadie en cola. Apúntate con **Me faltan jefes** y serás el primero.",
+		};
+	}
+
+	return {
+		title: "🔎 Solicitudes abiertas",
+		color: AZUL,
+		description:
+			"Grupos a los que aún se puede entrar. Apúntate al mismo jefe con " +
+			"**Me faltan jefes** y el bot te mete en uno automáticamente.",
+		fields,
+		footer: { text: "Los grupos se cierran solos al llegar a 3" },
+	};
+}

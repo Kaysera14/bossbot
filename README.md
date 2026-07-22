@@ -133,6 +133,7 @@ cuatro botones. **La gente del clan no necesita aprenderse ningún comando**:
   dos cifras: kills que te faltan y llaves que tienes. Si pones 0 kills, te
   apunta como apoyo.
 - **Mi grupo** → con quién vas, cuántas runs y si te toca abrir puerta.
+- **Ver abiertas** → todos los grupos con hueco y quién está esperando, por jefe.
 - **Hoy no puedo** → te saca de todo de un golpe.
 
 Todas las respuestas son privadas (solo las ves tú), así que el canal no se
@@ -160,6 +161,10 @@ Los mismos, por si alguien prefiere teclear:
 Un grupo se crea en cuanto hay gente suficiente y **queda abierto**: si alguien
 más se apunta a ese jefe, entra en el grupo existente en vez de crear uno
 nuevo. Al llegar a 3 se cierra solo.
+
+Al completarse, el bot publica un aviso mencionando a los tres, con las runs
+que necesitáis y quién abre cada puerta. El aviso sale se haya llenado como se
+haya llenado: por un alta, por un cierre manual o por el barrido interno.
 
 Si queréis empezar antes siendo dos, cualquiera del grupo pulsa 🔒 **Cerrar
 grupo** y deja de admitir gente. Y si alguien se va, el grupo se reabre para
