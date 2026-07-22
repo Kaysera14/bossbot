@@ -280,7 +280,7 @@ const texto = JSON.stringify(emb.fields);
 assert.ok(texto.includes("Medusa"), "sale el grupo abierto de Medusa");
 assert.ok(texto.includes("<@V1>") && texto.includes("<@V2>"), "con sus miembros");
 assert.ok(texto.includes("falta 1"), "y cuánta gente falta");
-assert.ok(texto.includes("Griffin") && texto.includes("En cola"), "y quién espera solo");
+assert.ok(texto.includes("Grifo") && texto.includes("En cola"), "y quién espera solo");
 console.log("✓ solicitudes abiertas: grupos con hueco y gente en cola");
 
 /* --- 14. Sin canal configurado, el bot no se calla --- */

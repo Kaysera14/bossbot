@@ -23,7 +23,24 @@ const regs = [reg("A", "zeus", 3, 1), reg("B", "zeus", 1, 2), reg("C", "zeus", 2
 const plan = keyPlan(regs, 3);
 assert.equal(plan.reduce((a, p) => a + p.use, 0), 3);
 assert.equal(groupStats(regs).deficit, 0);
+// Abre primero quien más llaves tiene, gastando las suyas antes de pasar al siguiente
+assert.equal(plan[0].userId, "B", "B tiene 2 llaves, abre él primero");
+assert.equal(plan[0].use, 2, "y gasta las dos");
 console.log("✓ reparto de llaves:", plan.map((p) => `${p.userId}x${p.use}`).join(" "));
+
+// Si a uno le sobran, no se reparte por turnos: abre él todas
+const sobrado = keyPlan(
+  [reg("A", "zeus", 0, 9), reg("B", "zeus", 0, 1), reg("C", "zeus", 0, 1)],
+  3,
+);
+assert.equal(sobrado.length, 1, "abre solo el que va sobrado de llaves");
+assert.equal(sobrado[0].userId, "A");
+assert.equal(sobrado[0].use, 3);
+
+// Y si no llegan, se usan todas las que haya
+const justo = keyPlan([reg("A", "zeus", 0, 1), reg("B", "zeus", 0, 1)], 5);
+assert.equal(justo.reduce((a, p) => a + p.use, 0), 2, "no inventa llaves que no existen");
+console.log("✓ abre quien más llaves tiene, no por turnos");
 
 g = matchPool([
   reg("D", "medusa", 4, 0),
@@ -153,5 +170,20 @@ assert.equal(await verifyRequest(fakeReq(sigHex, ts), body, pubHex), true, "firm
 assert.equal(await verifyRequest(fakeReq(sigHex, ts), body + "x", pubHex), false, "cuerpo manipulado rechazado");
 assert.equal(await verifyRequest({ headers: new Headers() }, body, pubHex), false, "sin cabeceras rechazado");
 console.log("✓ verificación de firma Ed25519");
+
+/* ---- todo en español ---- */
+
+const { BOSSES } = await import("../src/config.js");
+const ingles = /\b(key|book|Griffin|Devil|Chimera|Kronos|Valley|Gods)\b/i;
+for (const [id, b] of Object.entries(BOSSES)) {
+  assert.ok(!ingles.test(b.label), `el nombre de ${id} sigue en inglés: ${b.label}`);
+  assert.ok(!ingles.test(b.key), `la llave de ${id} sigue en inglés: ${b.key}`);
+  assert.ok(b.key.length > 3, `${id} necesita nombre de llave`);
+}
+// Las claves internas NO se traducen: están guardadas en la base de datos
+assert.deepEqual(Object.keys(BOSSES).sort(), [
+  "chimera", "devil", "griffin", "hades", "kronos", "medusa", "mesines", "sobek", "zeus",
+]);
+console.log("✓ nombres visibles en español, identificadores internos intactos");
 
 console.log("\nTodo OK");

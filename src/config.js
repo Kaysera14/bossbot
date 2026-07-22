@@ -1,16 +1,17 @@
-// ---- Jefes de The Valley of Gods y su llave correspondiente ----
+// ---- Jefes del Valle de los Dioses y su llave ----
+// Las claves internas (zeus, medusa...) NO se tocan: están guardadas en la
+// base de datos. Solo cambia lo que se muestra.
 export const BOSSES = {
-  zeus:    { label: "Zeus",    key: "Godly key",        emoji: "⚡" },
-  medusa:  { label: "Medusa",  key: "Stone key",        emoji: "🐍" },
-  hades:   { label: "Hades",   key: "Underworld key",   emoji: "💀" },
-  griffin: { label: "Griffin", key: "Mountain key",     emoji: "🦅" },
-  devil:   { label: "Devil",   key: "Burning key",      emoji: "🔥" },
-  chimera: { label: "Chimera", key: "Mutated key",      emoji: "🦁" },
-  sobek:   { label: "Sobek",   key: "Ancient key",      emoji: "🐊" },
-  kronos:  { label: "Kronos",  key: "Kronos' book",     emoji: "⏳" },
-  mesines: { label: "Mesines", key: "Otherworldly key", emoji: "🐉" },
+  zeus:    { label: "Zeus",    key: "Llave divina",        emoji: "⚡" },
+  medusa:  { label: "Medusa",  key: "Llave de piedra",     emoji: "🐍" },
+  hades:   { label: "Hades",   key: "Llave del inframundo", emoji: "💀" },
+  griffin: { label: "Grifo",   key: "Llave de la montaña", emoji: "🦅" },
+  devil:   { label: "Diablo",  key: "Llave ardiente",      emoji: "🔥" },
+  chimera: { label: "Quimera", key: "Llave mutada",        emoji: "🦁" },
+  sobek:   { label: "Sobek",   key: "Llave antigua",       emoji: "🐊" },
+  kronos:  { label: "Cronos",  key: "Libro de Cronos",     emoji: "⏳" },
+  mesines: { label: "Mesines", key: "Llave de otro mundo", emoji: "🐉" },
 };
-
 export const SCOPES = {
   daily:  { label: "Diario",  emoji: "🌙" },
   weekly: { label: "Semanal", emoji: "📅" },

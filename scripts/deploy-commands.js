@@ -44,7 +44,7 @@ const ambito = {
 };
 const jefe = {
 	name: "jefe",
-	description: "Jefe de The Valley of Gods",
+	description: "Jefe del Valle de los Dioses",
 	type: STRING,
 	required: true,
 	choices: jefeChoices,
@@ -62,14 +62,14 @@ const commands = [
 				description: "Cuántas kills necesitas (por defecto 1)",
 				type: INTEGER,
 				min_value: 1,
-				max_value: 50,
+				max_value: 999,
 			},
 			{
 				name: "llaves",
 				description: "Cuántas llaves tienes de ese jefe",
 				type: INTEGER,
 				min_value: 0,
-				max_value: 50,
+				max_value: 999,
 			},
 		],
 	},
@@ -85,7 +85,7 @@ const commands = [
 				type: INTEGER,
 				required: true,
 				min_value: 1,
-				max_value: 50,
+				max_value: 999,
 			},
 		],
 	},
@@ -106,6 +106,7 @@ const commands = [
 	{
 		name: "configurar",
 		description: "[Admin] Configura el canal de anuncios y roles admin",
+		default_member_permissions: MANAGE_GUILD,
 		options: [
 			{
 				name: "canal",

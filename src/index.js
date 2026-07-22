@@ -596,9 +596,13 @@ async function onModal(i, env, ctx) {
 		!Number.isInteger(need) ||
 		!Number.isInteger(keys) ||
 		need < 0 ||
-		keys < 0
+		keys < 0 ||
+		need > 999 ||
+		keys > 999
 	) {
-		return reply("Esos números no me cuadran. Pon cifras, por ejemplo 2 y 1.");
+		return reply(
+			"Esos números no me cuadran. Pon cifras entre 0 y 999, por ejemplo 2 y 1.",
+		);
 	}
 	return reply(
 		await registrar(env, i.guild_id, userId(i), scope, boss, need, keys, ctx),

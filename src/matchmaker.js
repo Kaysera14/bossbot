@@ -108,21 +108,22 @@ export function matchPool(poolBruto, opts = {}) {
   return out;
 }
 
-/** Reparte quién abre cada puerta, empezando por quien más llaves tiene. */
+/**
+ * Reparte quién abre cada puerta: empieza por quien más llaves tiene y gasta
+ * las suyas antes de pasar al siguiente. Así el que va sobrado carga con las
+ * aperturas y quien tiene una sola llave se la guarda salvo que haga falta.
+ */
 export function keyPlan(regs, runs) {
-  const pool = regs
+  const pool = dedupePool(regs)
     .filter((r) => r.keys > 0)
     .map((r) => ({ userId: r.userId, keys: r.keys, use: 0 }))
-    .sort((a, b) => b.keys - a.keys);
+    .sort((a, b) => b.keys - a.keys || String(a.userId).localeCompare(String(b.userId)));
+
   let left = runs;
-  let i = 0;
-  while (left > 0 && pool.some((p) => p.use < p.keys)) {
-    const p = pool[i % pool.length];
-    if (p.use < p.keys) {
-      p.use++;
-      left--;
-    }
-    i++;
+  for (const p of pool) {
+    if (left <= 0) break;
+    p.use = Math.min(p.keys, left);
+    left -= p.use;
   }
   return pool.filter((p) => p.use > 0);
 }

@@ -1,6 +1,6 @@
 # Boss bot de Idle Clans — versión Cloudflare Workers
 
-Empareja gente del clan para los jefes de The Valley of Gods según los jefes
+Empareja gente del clan para los jefes del Valle de los Dioses según los jefes
 que necesitan y las llaves que tienen. Diarios y semanales, con reset
 automático a las 02:00 hora española.
 
@@ -145,7 +145,7 @@ Los mismos, por si alguien prefiere teclear:
 
 | Comando | Qué hace |
 |---|---|
-| `/boss ambito jefe [cantidad] [llaves]` | Registra un jefe que necesitas matar |
+| `/boss ambito jefe [cantidad] [llaves]` | Registra un jefe que necesitas matar (hasta 999) |
 | `/apoyo ambito jefe llaves` | No lo necesitas, pero aportas llaves |
 | `/grupo` | Tu grupo, tus compañeros y cuántas puertas abres |
 | `/fuera` | **Te saca de todos tus grupos de golpe** |
@@ -155,6 +155,12 @@ Los mismos, por si alguien prefiere teclear:
 | `/emparejar` | *(Admin)* Fuerza la formación de grupos |
 | `/borrargrupos` | *(Admin)* Deshace todos los grupos; la gente vuelve a la cola |
 | `/reset ambito` | *(Admin)* Borra registros y grupos a mano |
+
+## Quién abre las puertas
+
+Abre quien más llaves tiene, gastando las suyas antes de pasar al siguiente.
+Si alguien va sobrado, carga él con todas las aperturas y el que tiene una
+sola llave se la guarda salvo que haga falta.
 
 ## Grupos abiertos
 
