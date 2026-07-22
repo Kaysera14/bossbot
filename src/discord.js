@@ -71,6 +71,32 @@ async function api(token, method, path, body) {
 export const sendMessage = (token, channelId, payload) =>
   api(token, "POST", `/channels/${channelId}/messages`, payload);
 
+/**
+ * Como sendMessage, pero devuelve el motivo del fallo en vez de tragárselo.
+ * Se usa para poder decirle al admin qué pasa en lugar de callar.
+ */
+export async function postMessage(token, channelId, payload) {
+  try {
+    const res = await fetch(`${API}/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bot ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return { ok: true, id: (await res.json()).id };
+
+    const texto = await res.text();
+    const motivo =
+      res.status === 403
+        ? "el bot no tiene permiso para escribir ahí (necesita Enviar mensajes e Insertar enlaces)"
+        : res.status === 404
+          ? "ese canal no existe o el bot no lo ve"
+          : `error ${res.status}: ${texto.slice(0, 150)}`;
+    return { ok: false, motivo };
+  } catch (err) {
+    return { ok: false, motivo: String(err?.message ?? err) };
+  }
+}
+
 export const editMessage = (token, channelId, messageId, payload) =>
   api(token, "PATCH", `/channels/${channelId}/messages/${messageId}`, payload);
 

@@ -129,7 +129,7 @@ export function statusButtons(grupos) {
 	}));
 }
 
-export function statusEmbed(uid, grupos, cola) {
+export function statusEmbed(uid, grupos, cola, sinCanal = false) {
 	const fields = [];
 
 	for (const { group, regs: regsBruto } of grupos) {
@@ -177,6 +177,11 @@ export function statusEmbed(uid, grupos, cola) {
 			color: AZUL,
 			description:
 				"No tienes nada registrado. Usa `/boss` para apuntar un jefe o `/apoyo` si solo tienes llaves.",
+			footer: sinCanal
+				? {
+						text: "⚠️ Sin canal de avisos: nadie recibe notificaciones. Que un admin use /configurar",
+					}
+				: undefined,
 		};
 	}
 
@@ -186,7 +191,9 @@ export function statusEmbed(uid, grupos, cola) {
 		description: `Próximo reset diario: ${discordTime(nextDailyReset())}`,
 		fields,
 		footer: {
-			text: "Los diarios se borran a las 02:00; los semanales, los lunes a las 02:00",
+			text: sinCanal
+				? "⚠️ Sin canal de avisos: nadie recibe notificaciones. Que un admin use /configurar"
+				: "Los diarios se borran a las 02:00; los semanales, los lunes a las 02:00",
 		},
 	};
 }

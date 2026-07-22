@@ -106,7 +106,6 @@ const commands = [
 	{
 		name: "configurar",
 		description: "[Admin] Configura el canal de anuncios y roles admin",
-		default_member_permissions: MANAGE_GUILD,
 		options: [
 			{
 				name: "canal",

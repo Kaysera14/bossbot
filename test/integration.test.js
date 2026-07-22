@@ -283,4 +283,22 @@ assert.ok(texto.includes("falta 1"), "y cuánta gente falta");
 assert.ok(texto.includes("Griffin") && texto.includes("En cola"), "y quién espera solo");
 console.log("✓ solicitudes abiertas: grupos con hueco y gente en cola");
 
+/* --- 14. Sin canal configurado, el bot no se calla --- */
+
+const DB3 = makeD1(fs.readFileSync("schema.sql", "utf8"));
+const env3 = { DB: DB3, DISCORD_TOKEN: "fake" };
+await db.ensureSchema(DB3);
+await db.ensureGuild(DB3, G); // ojo: sin setConfig, no hay canal
+
+await db.upsertReg(DB3, G, "daily", { userId: "N1", boss: "zeus", need: 2, keys: 1 });
+await db.upsertReg(DB3, G, "daily", { userId: "N2", boss: "zeus", need: 1, keys: 1 });
+const antesSinCanal = enviados.length;
+await matchAndAnnounce(env3, G);
+assert.equal(enviados.length, antesSinCanal, "sin canal no se manda nada (y no revienta)");
+
+const { statusEmbed } = await import("../src/ui.js");
+const pie = statusEmbed("N1", [], [], true).footer?.text ?? "";
+assert.ok(pie.includes("Sin canal de avisos"), "y se avisa en el pie de /grupo");
+console.log("✓ sin canal configurado el bot avisa en vez de callarse");
+
 console.log("\nTodo OK");

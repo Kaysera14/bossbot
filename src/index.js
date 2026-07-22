@@ -29,6 +29,7 @@ import {
 	reply,
 	updateMessage,
 	sendMessage,
+	postMessage,
 	editMessage,
 	opts,
 	userId,
@@ -238,16 +239,27 @@ async function registrar(env, guildId, uid, scope, boss, need, keys, ctx) {
 	// Puede haber entrado en un grupo nuevo o en uno abierto que ya existía.
 	const tras = await db.getReg(env.DB, guildId, scope, uid, boss);
 	if (!tras?.groupId) {
-		return `${linea}\n⏳ Aún no hay suficiente gente. Se te avisará en cuanto se forme el grupo.`;
+		const { announceChannelId } = await db.getConfig(env.DB, guildId);
+		return (
+			`${linea}\n⏳ Aún no hay suficiente gente. Se te avisará en cuanto se forme el grupo.` +
+			(announceChannelId
+				? ""
+				: "\n⚠️ Ojo: no hay canal de avisos configurado, así que ese aviso no llegará. Que un admin use `/configurar canal:#canal`.")
+		);
 	}
 
+	const { announceChannelId } = await db.getConfig(env.DB, guildId);
+	const sinCanal = announceChannelId
+		? ""
+		: "\n⚠️ No hay canal de avisos configurado, así que tus compañeros **no recibirán notificación**. Que un admin use `/configurar canal:#canal`.";
+
 	const g = await db.getGroup(env.DB, guildId, tras.groupId);
-	const faltan = GROUP_SIZE - (g?.regs.length ?? 0);
-	return `${linea}\n✅ Estás en el **grupo #${tras.groupId}**${
+	const faltan = GROUP_SIZE - (dedupePool(g?.regs ?? []).length ?? 0);
+	return `${sinCanal}${linea}\n✅ Estás en el **grupo #${tras.groupId}**${
 		g?.group.closed || faltan <= 0
 			? " (completo)"
 			: `, a la espera de ${faltan} más`
-	}. Pulsa "Mi grupo" para los detalles.`;
+	}. Pulsa "Mi grupo" para los detalles.${sinCanal}`;
 }
 
 /* ---------- salir de todo ---------- */
@@ -303,8 +315,9 @@ async function verMiSituacion(env, guildId, uid) {
 			cola.push(r);
 		}
 	}
+	const { announceChannelId } = await db.getConfig(env.DB, guildId);
 	return {
-		embed: statusEmbed(uid, grupos, cola),
+		embed: statusEmbed(uid, grupos, cola, !announceChannelId),
 		components: statusButtons(grupos),
 	};
 }
@@ -375,10 +388,24 @@ async function cmdConfigurar(i, env) {
 		patch.adminRoleIds = [...new Set([...cfg.adminRoleIds, o.rol_admin])];
 	const nuevo = await db.setConfig(env.DB, i.guild_id, patch);
 
+	// Prueba real: si el bot no puede escribir ahí, mejor saberlo ahora que
+	// descubrirlo cuando nadie reciba los avisos.
+	let prueba = "⚠️ **Sin canal configurado**: nadie recibirá avisos de grupo. Usa `/configurar canal:#tu-canal`.";
+	if (nuevo.announceChannelId) {
+		const res = await postMessage(env.DISCORD_TOKEN, nuevo.announceChannelId, {
+			content: "✅ Canal de avisos configurado. Aquí se publicarán los grupos.",
+		});
+		prueba = res.ok
+			? `✅ Prueba enviada a <#${nuevo.announceChannelId}>: los avisos funcionan.`
+			: `❌ **No he podido escribir en <#${nuevo.announceChannelId}>**: ${res.motivo}`;
+	}
+
 	return reply(
 		[
 			`Canal de anuncios: ${nuevo.announceChannelId ? `<#${nuevo.announceChannelId}>` : "_sin configurar_"}`,
 			`Roles admin extra: ${nuevo.adminRoleIds.map((r) => `<@&${r}>`).join(", ") || "_ninguno_"}`,
+			"",
+			prueba,
 			"",
 			"Usa `/panel` en el canal para dejar el mensaje con los botones.",
 		].join("\n"),
@@ -421,6 +448,9 @@ async function cmdEmparejar(i, env, ctx) {
 
 	const creados = await matchAndAnnounce(env, i.guild_id, ctx);
 	const cola = await resumenCola(env, i.guild_id);
+	const avisoCanal = cfg.announceChannelId
+		? ""
+		: "\n⚠️ **Sin canal de avisos**: nadie está recibiendo notificaciones. Usa `/configurar canal:#canal`.";
 
 	const grupos = (await db.allGroups(env.DB, i.guild_id)).map(
 		(g) =>
@@ -437,6 +467,7 @@ async function cmdEmparejar(i, env, ctx) {
 			...grupos,
 			cola.length ? "\n**En cola:**" : "\nNo queda nadie en cola.",
 			...cola,
+			avisoCanal,
 		]
 			.filter(Boolean)
 			.join("\n"),
