@@ -100,6 +100,10 @@ const commands = [
 		options: [ambito, jefe],
 	},
 	{
+		name: "borrargrupos",
+		description: "[Admin] Deshace todos los grupos; la gente vuelve a la cola",
+	},
+	{
 		name: "panel",
 		description: "[Admin] Publica el mensaje con botones en este canal",
 	},
