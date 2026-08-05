@@ -31,6 +31,7 @@ import {
 	sendMessage,
 	postMessage,
 	editMessage,
+	deleteMessage,
 	opts,
 	userId,
 	isAdmin,
@@ -199,7 +200,7 @@ async function refreshGroupMessage(env, guildId, groupId) {
  * Tras una baja: los grupos que se quedan cortos se disuelven y sus miembros
  * vuelven a la cola, para que el bot pueda recolocarlos con otra gente.
  */
-async function limpiarYRecolocar(env, guildId) {
+export async function limpiarYRecolocar(env, guildId) {
 	const cortos = await db.undersizedGroups(env.DB, guildId, MIN_GROUP_SIZE);
 
 	for (const g of cortos) {
@@ -415,7 +416,23 @@ async function cmdConfigurar(i, env) {
 async function cmdPanel(i, env) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
 	if (!isAdmin(i, cfg.adminRoleIds)) return reply("Solo admins.");
-	return json({ type: CallbackType.CHANNEL_MESSAGE, data: panelMessage() });
+	await publicarPanel(env, i.guild_id, i.channel_id);
+	return reply("Panel publicado más abajo. 👇", { ephemeral: true });
+}
+
+/**
+ * Publica el panel en un canal y borra el anterior si lo había, para no
+ * dejar paneles viejos y desincronizados tirados por el servidor.
+ */
+export async function publicarPanel(env, guildId, channelId) {
+	const previo = await db.getPanelLocation(env.DB, guildId);
+	if (previo.channelId && previo.messageId) {
+		await deleteMessage(env.DISCORD_TOKEN, previo.channelId, previo.messageId);
+	}
+
+	const res = await postMessage(env.DISCORD_TOKEN, channelId, panelMessage());
+	if (res.ok) await db.setPanelLocation(env.DB, guildId, channelId, res.id);
+	return res;
 }
 
 /** Explica quién sigue en cola y por qué no se ha formado grupo. */
@@ -769,6 +786,34 @@ export default {
 
 	async scheduled(event, env, ctx) {
 		await db.ensureSchema(env.DB);
+
+		// Red de seguridad: grupos por debajo del mínimo que se hayan quedado
+		// sueltos por cualquier motivo (datos antiguos, un camino no cubierto).
+		// Los tres caminos normales de salida ya los disuelven al momento; esto
+		// es solo un barrido de respaldo.
+		for (const g of await db.undersizedGroupsGlobal(env.DB, MIN_GROUP_SIZE)) {
+			await db.dissolveGroup(env.DB, g.guild_id, g.id);
+		}
+
+		// Grupos "ameba": cerrados hace mucho y nunca marcados como Completado.
+		// Se dan por hechos solos para no dejarlos acumulándose sin fin.
+		const rancios = await db.staleClosedGroups(
+			env.DB,
+			STALE_CLOSED_HOURS * 3600 * 1000,
+		);
+		for (const g of rancios) {
+			await db.completeGroup(env.DB, g.guild_id, g.id);
+			if (g.channel_id && g.message_id) {
+				ctx.waitUntil(
+					editMessage(env.DISCORD_TOKEN, g.channel_id, g.message_id, {
+						content: `⌛ Grupo #${g.id} cerrado hace más de ${STALE_CLOSED_HOURS}h sin completarse: dado por hecho automáticamente.`,
+						embeds: [],
+						components: [],
+					}),
+				);
+			}
+		}
+
 		for (const {
 			guildId,
 			scopes,
@@ -777,6 +822,15 @@ export default {
 			// Un grupo mixto sobrevive al reset diario con sus miembros semanales:
 			// hay que recalcular runs, llaves y si sigue lleno.
 			await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
+			// El panel se republica cada reset DIARIO (no en el semanal, que no
+			// trae reset propio salvo que coincida con uno diario también).
+			if (scopes.includes("daily")) {
+				const panel = await db.getPanelLocation(env.DB, guildId);
+				if (panel.channelId) {
+					ctx.waitUntil(publicarPanel(env, guildId, panel.channelId));
+				}
+			}
+
 			if (!announceChannelId) continue;
 			const nombres = scopes
 				.map((s) => SCOPES[s].label.toLowerCase())

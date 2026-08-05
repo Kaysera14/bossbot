@@ -17,7 +17,9 @@ export async function ensureSchema(db) {
       announce_channel_id TEXT,
       admin_role_ids TEXT NOT NULL DEFAULT '[]',
       daily_period TEXT,
-      weekly_period TEXT)`),
+      weekly_period TEXT,
+      panel_channel_id TEXT,
+      panel_message_id TEXT)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS groups (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       guild_id TEXT NOT NULL,
@@ -27,6 +29,7 @@ export async function ensureSchema(db) {
       keys INTEGER NOT NULL,
       created_at INTEGER NOT NULL,
       closed INTEGER NOT NULL DEFAULT 0,
+      closed_at INTEGER,
       locked INTEGER NOT NULL DEFAULT 0,
       channel_id TEXT,
       message_id TEXT)`),
@@ -45,7 +48,12 @@ export async function ensureSchema(db) {
 
   // Columnas añadidas después del despliegue inicial.
   const columnas = {
-    groups: { closed: "INTEGER NOT NULL DEFAULT 0", locked: "INTEGER NOT NULL DEFAULT 0" },
+    groups: {
+      closed: "INTEGER NOT NULL DEFAULT 0",
+      closed_at: "INTEGER",
+      locked: "INTEGER NOT NULL DEFAULT 0",
+    },
+    guilds: { panel_channel_id: "TEXT", panel_message_id: "TEXT" },
   };
   for (const [tabla, cols] of Object.entries(columnas)) {
     const { results } = await db.prepare(`PRAGMA table_info(${tabla})`).all();
@@ -111,6 +119,23 @@ export async function setConfig(db, guildId, { announceChannelId, adminRoleIds }
       .run();
   }
   return getConfig(db, guildId);
+}
+
+/** Dónde está el panel, para poder borrarlo y repostearlo cada reset. */
+export async function getPanelLocation(db, guildId) {
+  const r = await db
+    .prepare(`SELECT panel_channel_id, panel_message_id FROM guilds WHERE guild_id = ?`)
+    .bind(guildId)
+    .first();
+  return { channelId: r?.panel_channel_id ?? null, messageId: r?.panel_message_id ?? null };
+}
+
+export async function setPanelLocation(db, guildId, channelId, messageId) {
+  await ensureGuild(db, guildId);
+  await db
+    .prepare(`UPDATE guilds SET panel_channel_id=?, panel_message_id=? WHERE guild_id=?`)
+    .bind(channelId, messageId, guildId)
+    .run();
 }
 
 export async function upsertReg(db, guildId, scope, { userId, boss, need, keys, support }) {
@@ -294,13 +319,20 @@ export async function syncAllGroups(db, guildId, groupSize) {
          WHERE guild_id = ?`
       )
       .bind(guildId),
-    // Lleno o bloqueado -> cerrado
+    // Lleno o bloqueado -> cerrado (aquí SIEMPRE es una transición 0->1,
+    // por el WHERE closed=0, así que se marca la fecha sin condición extra).
     db
-      .prepare(`UPDATE groups SET closed=1 WHERE guild_id=? AND closed=0 AND (locked=1 OR ${miembros} >= ?)`)
-      .bind(guildId, groupSize),
+      .prepare(
+        `UPDATE groups SET closed=1, closed_at=?
+           WHERE guild_id=? AND closed=0 AND (locked=1 OR ${miembros} >= ?)`,
+      )
+      .bind(Date.now(), guildId, groupSize),
     // Ya no está lleno y no lo cerrasteis a mano -> se reabre
     db
-      .prepare(`UPDATE groups SET closed=0 WHERE guild_id=? AND closed=1 AND locked=0 AND ${miembros} < ?`)
+      .prepare(
+        `UPDATE groups SET closed=0, closed_at=NULL
+           WHERE guild_id=? AND closed=1 AND locked=0 AND ${miembros} < ?`,
+      )
       .bind(guildId, groupSize),
     // Sin nadie dentro -> se borra
     db
@@ -310,6 +342,41 @@ export async function syncAllGroups(db, guildId, groupSize) {
       )
       .bind(guildId),
   ]);
+}
+
+/**
+ * Grupos por debajo del mínimo en TODOS los servidores de golpe. Red de
+ * seguridad del cron: los tres caminos normales de salida ya disuelven estos
+ * grupos al momento, esto es solo para pillar cualquier resto suelto (datos
+ * de antes de que existiera esa protección, o un camino que se me escape).
+ */
+export async function undersizedGroupsGlobal(db, min) {
+  const { results } = await db
+    .prepare(
+      `SELECT g.id, g.guild_id, g.boss, COUNT(DISTINCT r.user_id) AS n
+         FROM groups g LEFT JOIN regs r ON r.group_id = g.id
+        GROUP BY g.id
+       HAVING n < ?`,
+    )
+    .bind(min)
+    .all();
+  return results;
+}
+
+/**
+ * Grupos cerrados desde hace más de `maxAgeMs` en TODOS los servidores.
+ * Son los "grupos ameba": se cerraron pero nadie pulsó nunca Completado.
+ */
+export async function staleClosedGroups(db, maxAgeMs) {
+  const limite = Date.now() - maxAgeMs;
+  const { results } = await db
+    .prepare(
+      `SELECT id, guild_id, boss, channel_id, message_id
+         FROM groups WHERE closed=1 AND closed_at IS NOT NULL AND closed_at < ?`,
+    )
+    .bind(limite)
+    .all();
+  return results;
 }
 
 /** Grupos abiertos de un jefe, con su gente, para poder ampliarlos. */
@@ -362,11 +429,29 @@ export async function removeUserBoss(db, guildId, userId, boss) {
 
 /** Actualiza runs/llaves y el estado de cierre. */
 export async function updateGroup(db, groupId, { runs, keys, closed, locked }) {
+  const cerrando = closed ? 1 : 0;
   await db
     .prepare(
-      `UPDATE groups SET runs=?, keys=?, closed=?, locked=COALESCE(?, locked) WHERE id=?`
+      `UPDATE groups SET
+         runs=?, keys=?, closed=?,
+         closed_at = CASE
+           WHEN ? = 1 AND closed = 0 THEN ?
+           WHEN ? = 0 THEN NULL
+           ELSE closed_at
+         END,
+         locked = COALESCE(?, locked)
+       WHERE id=?`,
     )
-    .bind(runs, keys, closed ? 1 : 0, locked === undefined ? null : locked ? 1 : 0, groupId)
+    .bind(
+      runs,
+      keys,
+      cerrando,
+      cerrando,
+      Date.now(),
+      cerrando,
+      locked === undefined ? null : locked ? 1 : 0,
+      groupId,
+    )
     .run();
 }
 
@@ -396,13 +481,27 @@ export async function resyncGroup(db, guildId, groupId, groupSize) {
   const runs = Math.max(0, ...personas.map((r) => r.need));
   const keys = personas.reduce((a, r) => a + r.keys, 0);
   const closed = !!g.group.locked || personas.length >= groupSize;
+  const estabaCerrado = !!g.group.closed;
 
   await db
-    .prepare(`UPDATE groups SET runs=?, keys=?, closed=? WHERE id=?`)
-    .bind(runs, keys, closed ? 1 : 0, groupId)
+    .prepare(
+      `UPDATE groups SET runs=?, keys=?, closed=?, closed_at=? WHERE id=?`,
+    )
+    .bind(
+      runs,
+      keys,
+      closed ? 1 : 0,
+      closed && !estabaCerrado ? Date.now() : closed ? g.group.closed_at : null,
+      groupId,
+    )
     .run();
 
-  return { deleted: false, closed, group: { ...g.group, runs, keys, closed: closed ? 1 : 0 }, regs: g.regs };
+  return {
+    deleted: false,
+    closed,
+    group: { ...g.group, runs, keys, closed: closed ? 1 : 0 },
+    regs: g.regs,
+  };
 }
 
 /** Borra registros y grupos de un ámbito. */

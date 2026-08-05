@@ -100,6 +100,15 @@ export async function postMessage(token, channelId, payload) {
 export const editMessage = (token, channelId, messageId, payload) =>
   api(token, "PATCH", `/channels/${channelId}/messages/${messageId}`, payload);
 
+/** No falla si el mensaje ya no existe: solo importa que no quede huérfano. */
+export async function deleteMessage(token, channelId, messageId) {
+  if (!channelId || !messageId) return;
+  await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+    method: "DELETE",
+    headers: { authorization: `Bot ${token}` },
+  }).catch(() => {});
+}
+
 /** Edita la respuesta diferida de una interacción. */
 export const editOriginal = (appId, interactionToken, payload) =>
   fetch(`${API}/webhooks/${appId}/${interactionToken}/messages/@original`, {

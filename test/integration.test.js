@@ -2,15 +2,20 @@ import assert from "node:assert";
 import fs from "node:fs";
 import { makeD1 } from "./d1-shim.js";
 import * as db from "../src/db.js";
-import { matchAndAnnounce } from "../src/index.js";
+import { matchAndAnnounce, publicarPanel } from "../src/index.js";
 
 const G = "guild-1";
 const enviados = [];
 
 // Intercepta las llamadas a Discord
 globalThis.fetch = async (url, init) => {
-  enviados.push({ url, body: JSON.parse(init.body || "{}") });
-  return { ok: true, status: 200, json: async () => ({ id: `msg-${enviados.length}` }) };
+  enviados.push({ url, method: init?.method ?? "POST", body: JSON.parse(init?.body || "{}") });
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ id: `msg-${enviados.length}` }),
+    text: async () => "",
+  };
 };
 
 const DB = makeD1(fs.readFileSync("schema.sql", "utf8"));
@@ -300,5 +305,118 @@ const { statusEmbed } = await import("../src/ui.js");
 const pie = statusEmbed("N1", [], [], true).footer?.text ?? "";
 assert.ok(pie.includes("Sin canal de avisos"), "y se avisa en el pie de /grupo");
 console.log("✓ sin canal configurado el bot avisa en vez de callarse");
+
+/* --- 15. El panel se recuerda y se puede republicar sin duplicar --- */
+
+let marcaPanel = enviados.length;
+const r1 = await publicarPanel(env, G, "canal-panel");
+assert.ok(r1.ok, "se publica el panel");
+assert.equal(enviados.slice(marcaPanel).length, 1, "solo 1 llamada: no había panel previo que borrar");
+
+const ubic1 = await db.getPanelLocation(DB, G);
+assert.equal(ubic1.channelId, "canal-panel");
+assert.equal(ubic1.messageId, r1.id);
+console.log("✓ /panel guarda dónde se publicó");
+
+marcaPanel = enviados.length;
+const r2 = await publicarPanel(env, G, "canal-panel");
+const llamadas = enviados.slice(marcaPanel);
+assert.equal(llamadas.length, 2, "borra el viejo (DELETE) y publica el nuevo (POST)");
+assert.ok(llamadas.some((l) => l.method === "DELETE"), "una es un borrado");
+assert.ok(llamadas.some((l) => l.method === "POST"), "la otra es la publicación nueva");
+
+const ubic2 = await db.getPanelLocation(DB, G);
+assert.notEqual(ubic2.messageId, ubic1.messageId, "el mensaje nuevo tiene otro id");
+console.log("✓ republicar borra el panel anterior, no lo duplica");
+
+/* --- 16. El reset diario republica el panel solo (vía cron) --- */
+
+await db.setPanelLocation(DB, G, "canal-panel", "msg-viejo");
+// Fuerza que toque reset hoy mismo, forzando un periodo distinto al actual
+await DB.prepare("UPDATE guilds SET daily_period='hace-tiempo' WHERE guild_id=?").bind(G).run();
+
+const resets = await db.applyResets(DB, G);
+assert.ok(resets.length && resets[0].scopes.includes("daily"), "hay un reset diario pendiente");
+
+marcaPanel = enviados.length;
+const panelTrasReset = await db.getPanelLocation(DB, G);
+if (panelTrasReset.channelId) await publicarPanel(env, G, panelTrasReset.channelId);
+assert.ok(
+  enviados.slice(marcaPanel).some((l) => l.method === "DELETE"),
+  "tras el reset se borra el panel de ayer",
+);
+assert.ok(
+  enviados.slice(marcaPanel).some((l) => l.method === "POST"),
+  "y se publica uno nuevo",
+);
+console.log("✓ el reset diario deja el panel fresco y sin duplicados");
+
+/* --- 17. Grupos "ameba": cerrados hace mucho, se autocompletan --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+await db.upsertReg(DB, G, "daily", { userId: "AM1", boss: "chimera", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "AM2", boss: "chimera", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+
+// Lo cerramos a mano, como con el botón 🔒
+const gAmeba = await DB.prepare("SELECT * FROM groups WHERE boss='chimera'").first();
+await db.updateGroup(DB, gAmeba.id, { runs: 1, keys: 2, closed: true, locked: true });
+
+const antesDeEnvejecer = await db.staleClosedGroups(DB, 20 * 3600 * 1000);
+assert.equal(antesDeEnvejecer.length, 0, "recién cerrado, aún no es viejo");
+
+// Lo envejecemos artificialmente
+await DB.prepare("UPDATE groups SET closed_at=? WHERE id=?")
+  .bind(Date.now() - 21 * 3600 * 1000, gAmeba.id)
+  .run();
+
+const rancios = await db.staleClosedGroups(DB, 20 * 3600 * 1000);
+assert.equal(rancios.length, 1, "ahora sí aparece como rancio");
+assert.equal(rancios[0].id, gAmeba.id);
+
+await db.completeGroup(DB, G, gAmeba.id);
+const yaNoExiste = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(gAmeba.id).first();
+assert.equal(yaNoExiste, null, "se autocompleta: desaparece");
+const regsLibres = (await DB.prepare("SELECT * FROM regs WHERE user_id IN ('AM1','AM2')").all()).results;
+assert.equal(regsLibres.length, 0, "y sus registros también, como con el botón Completado");
+console.log("✓ un grupo cerrado 20h sin completarse se autolimpia solo");
+
+// Uno recién cerrado no se toca
+await db.upsertReg(DB, G, "daily", { userId: "AM3", boss: "sobek", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "AM4", boss: "sobek", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "AM5", boss: "sobek", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+const gVivo = await DB.prepare("SELECT * FROM groups WHERE boss='sobek'").first();
+assert.equal(gVivo.closed, 1, "se cierra solo al llenarse");
+assert.ok(
+  !(await db.staleClosedGroups(DB, 20 * 3600 * 1000)).some((g) => g.id === gVivo.id),
+  "pero no es rancio todavía",
+);
+console.log("✓ un grupo recién cerrado no se toca");
+
+/* --- 18. Red de seguridad: grupo de 1 persona suelto se disuelve --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+// Simula un dato viejo/huérfano: grupo con una sola persona, marcado abierto
+await db.upsertReg(DB, G, "daily", { userId: "S1", boss: "kronos", need: 1, keys: 1 });
+const huerfano = await db.createGroup(DB, G, [{ userId: "S1", scope: "daily", boss: "kronos" }], {
+  boss: "kronos",
+  runs: 1,
+  keys: 1,
+});
+
+const sueltos = await db.undersizedGroupsGlobal(DB, 2);
+assert.ok(sueltos.some((g) => g.id === huerfano.id), "el barrido global lo detecta");
+
+await db.dissolveGroup(DB, G, huerfano.id);
+const yaNo = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(huerfano.id).first();
+assert.equal(yaNo, null, "se disuelve");
+const s1libre = await DB.prepare("SELECT group_id FROM regs WHERE user_id='S1'").first();
+assert.equal(s1libre.group_id, null, "y S1 vuelve a la cola, no pierde su registro");
+console.log("✓ red de seguridad: un grupo de 1 persona suelto se disuelve en el barrido");
 
 console.log("\nTodo OK");

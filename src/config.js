@@ -17,6 +17,11 @@ export const SCOPES = {
   weekly: { label: "Semanal", emoji: "📅" },
 };
 
+// Un grupo cerrado (lleno o bloqueado a mano) que lleva más de este tiempo
+// sin que nadie lo complete se autoborra en el siguiente reset diario. Evita
+// que se acumulen grupos "ameba" que ya nadie va a terminar.
+export const STALE_CLOSED_HOURS = 20;
+
 // Tamaño objetivo de grupo (la wiki recomienda 3 con 90+ de combate).
 export const GROUP_SIZE = 3;
 

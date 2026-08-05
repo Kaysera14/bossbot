@@ -156,6 +156,25 @@ Los mismos, por si alguien prefiere teclear:
 | `/borrargrupos` | *(Admin)* Deshace todos los grupos; la gente vuelve a la cola |
 | `/reset ambito` | *(Admin)* Borra registros y grupos a mano |
 
+## El panel se mantiene solo
+
+`/panel` recuerda en qué canal y mensaje se publicó. Cada reset diario, el bot
+borra ese mensaje y publica uno nuevo justo debajo de la conversación, para
+que no se quede enterrado bajo el chat del día. No hace falta volver a
+ejecutar `/panel` nunca, salvo que quieras moverlo de canal.
+
+## Limpieza automática de grupos
+
+Dos redes de seguridad corren en cada pasada del cron:
+
+- **Grupos "ameba"**: un grupo cerrado (🔒 o completo) que lleva más de
+  `STALE_CLOSED_HOURS` (20h por defecto, en `config.js`) sin que nadie pulse
+  ✅ Completado se da por hecho solo. Es habitual que la gente cierre el
+  grupo, lo haga y se olvide de pulsar el botón final.
+- **Grupos por debajo del mínimo**: si un grupo se queda con menos gente de
+  la cuenta (normalmente ya lo disuelven al momento los botones de salir),
+  este barrido pilla cualquier resto suelto.
+
 ## Quién abre las puertas
 
 Abre quien más llaves tiene, gastando las suyas antes de pasar al siguiente.
