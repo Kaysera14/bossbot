@@ -175,6 +175,33 @@ Dos redes de seguridad corren en cada pasada del cron:
   la cuenta (normalmente ya lo disuelven al momento los botones de salir),
   este barrido pilla cualquier resto suelto.
 
+## Diario y semanal van por separado
+
+Si alguien necesita el mismo jefe a diario y a la semana, ahora son **dos
+grupos distintos**, cada uno con sus propias runs y llaves. Antes se mezclaban
+en uno solo, lo que era un problema si las cifras eran muy distintas (2 kills
+diarias y 40 semanales acababan obligando al grupo entero a hacer 40 runs).
+
+Para volver al comportamiento antiguo (mezclarlos), pon `MATCH_ACROSS_SCOPES =
+true` en `config.js`.
+
+## Las acciones de grupo viven en /grupo, no en el canal
+
+Los mensajes públicos de "grupo formado" ya no llevan botones. Antes cualquiera
+que pasara por el canal podía ver (y pulsar, aunque el bot lo rechazara)
+Cerrar/Completado/Salir de un grupo ajeno. Ahora esas acciones solo están en
+`/grupo`, que es privado y **solo enseña tus propios grupos** — es
+estructuralmente imposible ver ahí opciones de un grupo que no es tuyo.
+
+Al pulsar ✅ Completado, el mensaje público del canal se borra directamente,
+no se queda editado con un aviso.
+
+## Unirse directo desde "Ver abiertas"
+
+Cada jefe con hueco tiene un botón **Unirme**, que abre la misma ventanita de
+siempre (kills + llaves) sin pasar por el desplegable, porque el jefe ya se
+sabe por el botón.
+
 ## Quién abre las puertas
 
 Abre quien más llaves tiene, gastando las suyas antes de pasar al siguiente.

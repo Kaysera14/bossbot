@@ -212,12 +212,19 @@ export async function createGroup(db, guildId, miembros, g) {
     .first();
 
   const id = created.id;
-  const personas = [...new Set(miembros.map((r) => r.userId))];
+
+  // OJO: se marca fila por fila usando (scope, userId), no solo userId.
+  // Si alguien está apuntado al mismo jefe en diario Y semanal, un UPDATE
+  // que solo mirara userId+boss se llevaría por delante la fila del OTRO
+  // ámbito, aunque esa persona no forme parte de este grupo.
+  const filas = new Map(miembros.map((r) => [`${r.scope}|${r.userId}`, r]));
   await db.batch(
-    personas.map((uid) =>
+    [...filas.values()].map((r) =>
       db
-        .prepare(`UPDATE regs SET group_id=? WHERE guild_id=? AND user_id=? AND boss=?`)
-        .bind(id, guildId, uid, g.boss)
+        .prepare(
+          `UPDATE regs SET group_id=? WHERE guild_id=? AND scope=? AND user_id=? AND boss=?`
+        )
+        .bind(id, guildId, r.scope, r.userId, g.boss)
     )
   );
   return { ...g, id, scope };
@@ -380,10 +387,13 @@ export async function staleClosedGroups(db, maxAgeMs) {
 }
 
 /** Grupos abiertos de un jefe, con su gente, para poder ampliarlos. */
-export async function openGroups(db, guildId) {
+export async function openGroups(db, guildId, scope = null) {
+  const filtroScope = scope ? `AND scope=?` : "";
+  const bindScope = scope ? [scope] : [];
+
   const { results: grupos } = await db
-    .prepare(`SELECT * FROM groups WHERE guild_id=? AND closed=0`)
-    .bind(guildId)
+    .prepare(`SELECT * FROM groups WHERE guild_id=? AND closed=0 ${filtroScope}`)
+    .bind(guildId, ...bindScope)
     .all();
   if (!grupos.length) return [];
 
@@ -391,9 +401,10 @@ export async function openGroups(db, guildId) {
   const { results: todos } = await db
     .prepare(
       `SELECT * FROM regs
-        WHERE guild_id=? AND group_id IN (SELECT id FROM groups WHERE guild_id=? AND closed=0)`
+        WHERE guild_id=? AND group_id IN
+          (SELECT id FROM groups WHERE guild_id=? AND closed=0 ${filtroScope})`
     )
-    .bind(guildId, guildId)
+    .bind(guildId, guildId, ...bindScope)
     .all();
 
   const porGrupo = new Map();

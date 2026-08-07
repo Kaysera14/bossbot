@@ -57,16 +57,18 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 	// todos los grupos, incluidos los cerrados y los heredados de otra versión.
 	await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
 
-	// Diario y semanal van a la misma bolsa: una kill sirve para las dos tareas.
-	const bolsas = MATCH_ACROSS_SCOPES
-		? [await db.unassignedAll(env.DB, guildId)]
-		: await Promise.all(
-				Object.keys(SCOPES).map((s) => db.unassignedRegs(env.DB, guildId, s)),
-			);
+	// Diario y semanal van a la misma bolsa solo si MATCH_ACROSS_SCOPES está
+	// activado. Por defecto van separados: cada ámbito con sus propios grupos
+	// abiertos, para no mezclar runs de tamaños muy distintos en un grupo.
+	const scopesAProcesar = MATCH_ACROSS_SCOPES ? [null] : Object.keys(SCOPES);
 
-	for (let pool of bolsas) {
-		// 1) Primero se rellenan los grupos que siguen abiertos.
-		for (const { group, regs } of await db.openGroups(env.DB, guildId)) {
+	for (const scope of scopesAProcesar) {
+		let pool = scope
+			? await db.unassignedRegs(env.DB, guildId, scope)
+			: await db.unassignedAll(env.DB, guildId);
+
+		// 1) Primero se rellenan los grupos que siguen abiertos EN ESE ÁMBITO.
+		for (const { group, regs } of await db.openGroups(env.DB, guildId, scope)) {
 			const elegidos = pickForGroup(
 				regs,
 				pool.filter((r) => r.boss === group.boss),
@@ -147,8 +149,10 @@ async function publicarAvisos(
 		const msg = await sendMessage(env.DISCORD_TOKEN, announceChannelId, {
 			content: `${g.members.map((u) => `<@${u}>`).join(" ")} ¡grupo formado!`,
 			embeds: [groupEmbed(g.id, g.boss, regs, !!group.closed)],
-			components: groupButtons(g.id, !!group.closed),
 			allowed_mentions: { users: g.members },
+			// Sin botones aquí: para no dar acciones sobre grupos ajenos a quien
+			// simplemente pase por el canal. Cada uno gestiona SU grupo desde
+			// /grupo, que ya es privado y solo enseña lo que le corresponde.
 		});
 		if (msg?.id)
 			await db.setGroupMessage(env.DB, g.id, announceChannelId, msg.id);
@@ -192,7 +196,7 @@ async function refreshGroupMessage(env, guildId, groupId) {
 	if (!g?.group.message_id) return;
 	await editMessage(env.DISCORD_TOKEN, g.group.channel_id, g.group.message_id, {
 		embeds: [groupEmbed(g.group.id, g.group.boss, g.regs, !!g.group.closed)],
-		components: groupButtons(g.group.id, !!g.group.closed),
+		components: [],
 	});
 }
 
@@ -591,7 +595,8 @@ async function onPanel(i, env, ctx) {
 		await db.syncAllGroups(env.DB, i.guild_id, GROUP_SIZE);
 		const abiertos = await db.openGroups(env.DB, i.guild_id);
 		const cola = await db.unassignedAll(env.DB, i.guild_id);
-		return reply(null, { embeds: [openRequestsEmbed(abiertos, cola)] });
+		const vista = openRequestsEmbed(abiertos, cola);
+		return reply(null, { embeds: [vista.embed], components: vista.components });
 	}
 	if (action === "out")
 		return reply(await salirDeTodo(env, i.guild_id, uid, ctx));
@@ -602,6 +607,13 @@ async function onPanel(i, env, ctx) {
 function onSelect(i) {
 	const [, , scope] = i.data.custom_id.split(":");
 	return json(regModal(scope, i.data.values[0]));
+}
+
+/** Botón "Unirme" de la vista de solicitudes abiertas: va directo al modal,
+ * sin pasar por el desplegable, porque el jefe ya se sabe por el botón. */
+function onJoinOpen(i) {
+	const [, , scope, boss] = i.data.custom_id.split(":");
+	return json(regModal(scope, boss));
 }
 
 async function onModal(i, env, ctx) {
@@ -636,6 +648,10 @@ async function onStatusButton(i, env, ctx) {
 
 	const g = await db.getGroup(env.DB, gid, groupId);
 	if (g && g.regs.some((r) => r.userId === uid)) {
+		// Se guardan antes de tocar la BD: completeGroup borra la fila del
+		// grupo, y con ella se perdería el rastro de dónde está el mensaje.
+		const { channel_id: msgChannel, message_id: msgId } = g.group;
+
 		if (action === "lock") {
 			const st = groupStats(g.regs);
 			await db.updateGroup(env.DB, groupId, {
@@ -650,10 +666,16 @@ async function onStatusButton(i, env, ctx) {
 			await db.removeUserBoss(env.DB, gid, uid, g.group.boss);
 			await db.resyncGroup(env.DB, gid, groupId, GROUP_SIZE);
 		}
+
 		ctx.waitUntil(
 			(async () => {
-				await refreshGroupMessage(env, gid, groupId);
-				if (action === "leave") await limpiarYRecolocar(env, gid);
+				if (action === "done") {
+					// El grupo ya no existe: se borra el mensaje en vez de editarlo.
+					await deleteMessage(env.DISCORD_TOKEN, msgChannel, msgId);
+				} else {
+					await refreshGroupMessage(env, gid, groupId);
+					if (action === "leave") await limpiarYRecolocar(env, gid);
+				}
 			})(),
 		);
 	}
@@ -692,11 +714,8 @@ async function onGroupButton(i, env, ctx) {
 
 	if (action === "done") {
 		await db.completeGroup(env.DB, gid, groupId);
-		return updateMessage({
-			content: `✅ Grupo #${groupId} completado.`,
-			embeds: i.message.embeds,
-			components: [],
-		});
+		ctx.waitUntil(deleteMessage(env.DISCORD_TOKEN, i.channel_id, i.message.id));
+		return json({ type: CallbackType.DEFERRED_UPDATE });
 	}
 
 	if (action === "leave") {
@@ -750,6 +769,7 @@ async function handleInteraction(i, env, ctx) {
 		if (id.startsWith("g:")) return onGroupButton(i, env, ctx);
 		if (id.startsWith("p:")) return onPanel(i, env, ctx);
 		if (id.startsWith("sel:")) return onSelect(i);
+		if (id.startsWith("o:join:")) return onJoinOpen(i);
 		if (id.startsWith("adm:")) return onAdminButton(i, env);
 		if (id.startsWith("s:")) return onStatusButton(i, env, ctx);
 	}
@@ -805,11 +825,15 @@ export default {
 			await db.completeGroup(env.DB, g.guild_id, g.id);
 			if (g.channel_id && g.message_id) {
 				ctx.waitUntil(
-					editMessage(env.DISCORD_TOKEN, g.channel_id, g.message_id, {
-						content: `⌛ Grupo #${g.id} cerrado hace más de ${STALE_CLOSED_HOURS}h sin completarse: dado por hecho automáticamente.`,
-						embeds: [],
-						components: [],
-					}),
+					(async () => {
+						// Se avisa con un mensaje aparte (nadie lo pidió, así que sí
+						// conviene dejar rastro) y se borra el original, igual que
+						// al completar un grupo a mano.
+						await sendMessage(env.DISCORD_TOKEN, g.channel_id, {
+							content: `⌛ Grupo #${g.id} (${BOSSES[g.boss]?.label ?? g.boss}) llevaba más de ${STALE_CLOSED_HOURS}h cerrado sin completarse: dado por hecho automáticamente.`,
+						});
+						await deleteMessage(env.DISCORD_TOKEN, g.channel_id, g.message_id);
+					})(),
 				);
 			}
 		}

@@ -51,7 +51,7 @@ export function groupEmbed(groupId, boss, regsBruto, closed = false) {
 	if (!closed && faltan > 0) {
 		fields.push({
 			name: "\u200b",
-			value: `Sigue abierto: si alguien más se apunta a ${b.label} entrará aquí. Podéis cerrarlo ya con el botón 🔒.`,
+			value: `Sigue abierto: si alguien más se apunta a ${b.label} entrará aquí.`,
 		});
 	}
 
@@ -59,6 +59,9 @@ export function groupEmbed(groupId, boss, regsBruto, closed = false) {
 		title: `${b.emoji} ${b.label} · Grupo #${groupId}`,
 		color: deficit ? AMBAR : VERDE,
 		fields,
+		footer: {
+			text: "Para cerrar, marcar completado o salir del grupo, usa /grupo (solo lo ven sus miembros)",
+		},
 	};
 }
 
@@ -200,69 +203,102 @@ export function statusEmbed(uid, grupos, cola, sinCanal = false) {
 
 /**
  * Vista de "solicitudes abiertas": grupos a los que aún se puede entrar y
- * quién está esperando, agrupado por jefe.
+ * quién está esperando, agrupado por ámbito + jefe (van separados: un grupo
+ * diario y uno semanal del mismo jefe son cosas distintas).
  */
 export function openRequestsEmbed(gruposAbiertos, cola) {
-	const porJefe = {};
+	const porClave = {};
+	const clave = (scope, boss) => `${scope}|${boss}`;
 
 	for (const { group, regs } of gruposAbiertos) {
-		(porJefe[group.boss] ??= { grupos: [], espera: [] }).grupos.push({
-			group,
-			regs: dedupePool(regs),
-		});
+		const scope = group.scope === "mixto" ? "daily" : group.scope; // legacy
+		(porClave[clave(scope, group.boss)] ??= {
+			scope,
+			boss: group.boss,
+			grupos: [],
+			espera: [],
+		}).grupos.push({ group, regs: dedupePool(regs) });
 	}
 	for (const r of dedupePool(cola)) {
-		(porJefe[r.boss] ??= { grupos: [], espera: [] }).espera.push(r);
+		(porClave[clave(r.scope, r.boss)] ??= {
+			scope: r.scope,
+			boss: r.boss,
+			grupos: [],
+			espera: [],
+		}).espera.push(r);
 	}
 
-	const fields = Object.entries(porJefe)
-		.slice(0, 25)
-		.map(([boss, { grupos, espera }]) => {
-			const b = BOSSES[boss];
-			const lineas = [];
+	const entradas = Object.values(porClave).slice(0, 25);
 
-			for (const { group, regs } of grupos) {
-				const faltan = GROUP_SIZE - regs.length;
-				lineas.push(
-					`**#${group.id}** (${regs.length}/${GROUP_SIZE}) — ` +
-						`${regs.map((r) => `<@${r.userId}>`).join(", ")} · ` +
-						`falta${faltan === 1 ? "" : "n"} ${faltan}`,
-				);
-			}
+	const fields = entradas.map(({ scope, boss, grupos, espera }) => {
+		const b = BOSSES[boss];
+		const lineas = [];
 
-			if (espera.length) {
-				lineas.push(
-					`⏳ En cola: ${espera
-						.map(
-							(r) =>
-								`<@${r.userId}> (${r.support || r.need === 0 ? "apoyo" : `${r.need}`} · 🔑 ${r.keys})`,
-						)
-						.join(", ")}`,
-				);
-			}
+		for (const { group, regs } of grupos) {
+			const faltan = GROUP_SIZE - regs.length;
+			lineas.push(
+				`**#${group.id}** (${regs.length}/${GROUP_SIZE}) — ` +
+					`${regs.map((r) => `<@${r.userId}>`).join(", ")} · ` +
+					`falta${faltan === 1 ? "" : "n"} ${faltan}`,
+			);
+		}
 
-			return {
-				name: `${b.emoji} ${b.label}`,
-				value: lineas.join("\n").slice(0, 1024) || "—",
-			};
+		if (espera.length) {
+			lineas.push(
+				`⏳ En cola: ${espera
+					.map(
+						(r) =>
+							`<@${r.userId}> (${r.support || r.need === 0 ? "apoyo" : `${r.need}`} · 🔑 ${r.keys})`,
+					)
+					.join(", ")}`,
+			);
+		}
+
+		return {
+			name: `${b.emoji} ${b.label} · ${SCOPES[scope]?.emoji ?? ""} ${SCOPES[scope]?.label ?? ""}`,
+			value: lineas.join("\n").slice(0, 1024) || "—",
+		};
+	});
+
+	// Un botón "Unirme" por cada (ámbito, jefe) que tenga un grupo con hueco
+	// de verdad — a la cola pura no hay a qué unirse todavía, solo apuntarse.
+	const conHueco = entradas.filter((e) => e.grupos.length > 0).slice(0, 20);
+	const components = [];
+	for (let i = 0; i < conHueco.length; i += 5) {
+		components.push({
+			type: 1,
+			components: conHueco.slice(i, i + 5).map(({ scope, boss }) => ({
+				type: 2,
+				custom_id: `o:join:${scope}:${boss}`,
+				label: `Unirme a ${BOSSES[boss].label} (${SCOPES[scope].label})`,
+				emoji: { name: "➕" },
+				style: 3,
+			})),
 		});
+	}
 
 	if (!fields.length) {
 		return {
-			title: "🔎 Solicitudes abiertas",
-			color: AZUL,
-			description:
-				"No hay ningún grupo abierto ni nadie en cola. Apúntate con **Me faltan jefes** y serás el primero.",
+			embed: {
+				title: "🔎 Solicitudes abiertas",
+				color: AZUL,
+				description:
+					"No hay ningún grupo abierto ni nadie en cola. Apúntate con **Me faltan jefes** y serás el primero.",
+			},
+			components: [],
 		};
 	}
 
 	return {
-		title: "🔎 Solicitudes abiertas",
-		color: AZUL,
-		description:
-			"Grupos a los que aún se puede entrar. Apúntate al mismo jefe con " +
-			"**Me faltan jefes** y el bot te mete en uno automáticamente.",
-		fields,
-		footer: { text: "Los grupos se cierran solos al llegar a 3" },
+		embed: {
+			title: "🔎 Solicitudes abiertas",
+			color: AZUL,
+			description:
+				"Grupos a los que aún se puede entrar. Pulsa **Unirme** o apúntate con " +
+				"**Me faltan jefes** y el bot te mete en uno automáticamente.",
+			fields,
+			footer: { text: "Los grupos se cierran solos al llegar a 3" },
+		},
+		components,
 	};
 }

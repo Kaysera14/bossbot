@@ -29,14 +29,14 @@ const apuntar = (user, scope, boss, need, keys) =>
 
 /* --- 1. Dos personas: se forma un grupo abierto --- */
 
-await apuntar("A", "weekly", "zeus", 3, 1);
+await apuntar("A", "daily", "zeus", 3, 1);
 await apuntar("B", "daily", "zeus", 2, 2);
 await matchAndAnnounce(env, G);
 
 let grupos = (await DB.prepare("SELECT * FROM groups").all()).results;
 assert.equal(grupos.length, 1, "se crea un grupo");
 assert.equal(grupos[0].closed, 0, "con 2 personas sigue abierto");
-assert.equal(grupos[0].scope, "mixto", "mezcla diario y semanal");
+assert.equal(grupos[0].scope, "daily", "el grupo hereda el ámbito de sus miembros");
 console.log("✓ 2 personas → grupo abierto");
 
 /* --- 2. Entra un tercero: debe cerrarse solo --- */
@@ -117,34 +117,36 @@ await matchAndAnnounce(env, G);
 assert.ok((await DB.prepare("SELECT COUNT(*) AS n FROM groups").first()).n > 0, "se vuelven a formar");
 console.log("✓ tras deshacerlos, /emparejar los rehace");
 
-/* --- 8. La misma persona apuntada al mismo jefe en diario Y semanal --- */
+/* --- 8. Diario y semanal van a grupos SEPARADOS, incluso para la misma persona --- */
 
 await db.dissolveAllGroups(DB, G);
 await DB.prepare("DELETE FROM regs").run();
 
+// K necesita Sobek tanto a diario como semanalmente (kills muy distintas).
 await db.upsertReg(DB, G, "daily",  { userId: "K", boss: "sobek", need: 1, keys: 2 });
-await db.upsertReg(DB, G, "weekly", { userId: "K", boss: "sobek", need: 3, keys: 2 });
+await db.upsertReg(DB, G, "weekly", { userId: "K", boss: "sobek", need: 40, keys: 2 });
 await db.upsertReg(DB, G, "daily",  { userId: "W", boss: "sobek", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily",  { userId: "Z", boss: "sobek", need: 1, keys: 0 });
+await db.upsertReg(DB, G, "weekly", { userId: "Y", boss: "sobek", need: 35, keys: 3 });
 await matchAndAnnounce(env, G);
 
-const gs = await DB.prepare("SELECT * FROM groups WHERE boss='sobek'").first();
-const filas = (await DB.prepare("SELECT user_id FROM regs WHERE group_id=?").bind(gs.id).all()).results;
-const personas = new Set(filas.map((r) => r.user_id));
+const gDaily = await DB.prepare("SELECT * FROM groups WHERE boss='sobek' AND scope='daily'").first();
+const gWeekly = await DB.prepare("SELECT * FROM groups WHERE boss='sobek' AND scope='weekly'").first();
 
-assert.equal(personas.size, 2, "son 2 personas, no 3");
-assert.equal(gs.closed, 0, "con 2 personas el grupo sigue abierto aunque haya 3 filas");
-assert.equal(gs.keys, 3, "las llaves de K cuentan una vez (2), no dos (4)");
-assert.equal(gs.runs, 3, "las runs son las de la tarea más larga de cada uno");
-console.log("✓ diario + semanal de la misma persona = 1 hueco y 1 juego de llaves");
+assert.ok(gDaily, "se forma el grupo diario");
+assert.ok(gWeekly, "y por separado el semanal");
+assert.notEqual(gDaily.id, gWeekly.id, "son dos grupos distintos");
+assert.equal(gDaily.runs, 1, "el grupo diario no arrastra las 40 runs semanales de K");
+assert.equal(gWeekly.runs, 40, "ni al revés: el semanal no se contamina con el 1 diario");
 
-// Y al entrar un tercero real, ahí sí se cierra
-await db.upsertReg(DB, G, "daily", { userId: "Z", boss: "sobek", need: 1, keys: 0 });
-await matchAndAnnounce(env, G);
-const gs2 = await DB.prepare("SELECT * FROM groups WHERE boss='sobek'").first();
-assert.equal(gs2.closed, 1, "con la tercera persona real sí se cierra");
-console.log("✓ y con la tercera persona real se cierra");
+const enDiario = (await DB.prepare("SELECT user_id FROM regs WHERE group_id=?").bind(gDaily.id).all()).results.map((r) => r.user_id);
+const enSemanal = (await DB.prepare("SELECT user_id FROM regs WHERE group_id=?").bind(gWeekly.id).all()).results.map((r) => r.user_id);
+assert.deepEqual(enDiario.sort(), ["K", "W", "Z"]);
+assert.deepEqual(enSemanal.sort(), ["K", "Y"]);
+assert.ok(enDiario.includes("K") && enSemanal.includes("K"), "K está en los dos grupos a la vez, uno por ámbito");
+console.log("✓ diario y semanal forman grupos separados, incluso para la misma persona");
 
-// Al salirse, se le quitan los dos registros del jefe
+// Salir quita a K de los DOS grupos de golpe (los dos ámbitos del jefe)
 await db.removeUserBoss(DB, G, "K", "sobek");
 const quedan = (await DB.prepare("SELECT * FROM regs WHERE user_id='K' AND boss='sobek'").all()).results;
 assert.equal(quedan.length, 0, "salir quita el registro de los dos ámbitos");
@@ -173,27 +175,28 @@ const gk = await DB2.prepare("SELECT * FROM groups WHERE boss='kronos'").first()
 assert.equal(gk.closed, 1, "sobre una base sin migrar, el grupo de 3 se cierra igual");
 console.log("✓ una base de datos sin migrar se repara sola y funciona");
 
-/* --- 10. Reset diario con un grupo mixto --- */
+/* --- 10. El reset diario no toca los grupos semanales, y viceversa --- */
 
 await db.dissolveAllGroups(DB, G);
 await DB.prepare("DELETE FROM regs").run();
 
+// Grupo puramente semanal para Mesines.
 await db.upsertReg(DB, G, "weekly", { userId: "M1", boss: "mesines", need: 4, keys: 2 });
-await db.upsertReg(DB, G, "daily",  { userId: "M2", boss: "mesines", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "weekly", { userId: "M2", boss: "mesines", need: 1, keys: 1 });
 await matchAndAnnounce(env, G);
 const gm = await DB.prepare("SELECT * FROM groups WHERE boss='mesines'").first();
-assert.ok(gm, "grupo mixto creado");
+assert.ok(gm, "grupo semanal creado");
+assert.equal(gm.scope, "weekly");
 
-// Llega el reset diario: se van los registros diarios, el grupo debe seguir
+// Llega el reset diario: no debería tocar un grupo 100% semanal.
 await db.wipeScope(DB, G, "daily");
 await db.syncAllGroups(DB, G, 3);
 const gm2 = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(gm.id).first();
-assert.ok(gm2, "el grupo mixto sobrevive al reset diario");
-assert.equal(gm2.runs, 4, "las runs se recalculan con quien queda");
-assert.equal(gm2.keys, 2, "y las llaves también");
-console.log("✓ el reset diario no se lleva por delante un grupo mixto");
+assert.ok(gm2, "el grupo semanal sobrevive intacto al reset diario");
+assert.equal(gm2.runs, 4, "sin cambios: el reset diario no tenía nada que tocar aquí");
+console.log("✓ el reset diario no afecta a los grupos semanales");
 
-// Si el reset deja el grupo sin nadie, desaparece
+// Ahora sí llega el reset semanal: ese grupo desaparece.
 await db.wipeScope(DB, G, "weekly");
 await db.syncAllGroups(DB, G, 3);
 const gm3 = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(gm.id).first();
@@ -275,18 +278,24 @@ await db.upsertReg(DB, G, "daily", { userId: "V2", boss: "medusa", need: 1, keys
 await db.upsertReg(DB, G, "weekly", { userId: "V3", boss: "griffin", need: 1, keys: 3 });
 await matchAndAnnounce(env, G);
 
-const emb = openRequestsEmbed(
+const vista = openRequestsEmbed(
   await db.openGroups(DB, G),
   await db.unassignedAll(DB, G),
 );
-assert.ok(emb.title.includes("Solicitudes abiertas"));
+assert.ok(vista.embed.title.includes("Solicitudes abiertas"));
 
-const texto = JSON.stringify(emb.fields);
+const texto = JSON.stringify(vista.embed.fields);
 assert.ok(texto.includes("Medusa"), "sale el grupo abierto de Medusa");
 assert.ok(texto.includes("<@V1>") && texto.includes("<@V2>"), "con sus miembros");
 assert.ok(texto.includes("falta 1"), "y cuánta gente falta");
 assert.ok(texto.includes("Grifo") && texto.includes("En cola"), "y quién espera solo");
-console.log("✓ solicitudes abiertas: grupos con hueco y gente en cola");
+
+// Y hay un botón "Unirme" para el grupo con hueco (Medusa), pero no para
+// Grifo, que solo tiene cola y ningún grupo al que unirse todavía.
+const botones = vista.components.flatMap((r) => r.components.map((c) => c.custom_id));
+assert.ok(botones.some((id) => id.includes("medusa")), "botón de unirse a Medusa");
+assert.ok(!botones.some((id) => id.includes("griffin")), "Grifo no tiene grupo, no hay botón");
+console.log("✓ solicitudes abiertas: grupos con hueco, gente en cola y botón de unirse");
 
 /* --- 14. Sin canal configurado, el bot no se calla --- */
 
@@ -418,5 +427,35 @@ assert.equal(yaNo, null, "se disuelve");
 const s1libre = await DB.prepare("SELECT group_id FROM regs WHERE user_id='S1'").first();
 assert.equal(s1libre.group_id, null, "y S1 vuelve a la cola, no pierde su registro");
 console.log("✓ red de seguridad: un grupo de 1 persona suelto se disuelve en el barrido");
+
+/* --- 19. createGroup no se lleva por delante la fila del OTRO ámbito --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+// Reproduce el bug real: al formarse el grupo diario, la fila semanal de la
+// misma persona para el mismo jefe no debe tocarse.
+await db.upsertReg(DB, G, "daily",  { userId: "BUG1", boss: "devil", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "weekly", { userId: "BUG1", boss: "devil", need: 20, keys: 1 });
+await db.upsertReg(DB, G, "daily",  { userId: "BUG2", boss: "devil", need: 1, keys: 1 });
+
+await matchAndAnnounce(env, G);
+
+const filaSemanal = await DB.prepare(
+  "SELECT group_id FROM regs WHERE user_id='BUG1' AND scope='weekly'",
+).first();
+assert.equal(
+  filaSemanal.group_id,
+  null,
+  "la fila semanal de BUG1 sigue libre: no la ha tocado el grupo diario",
+);
+
+const grupoDiario = await DB.prepare("SELECT * FROM groups WHERE boss='devil' AND scope='daily'").first();
+const enGrupoDiario = (
+  await DB.prepare("SELECT user_id, scope FROM regs WHERE group_id=?").bind(grupoDiario.id).all()
+).results;
+assert.equal(enGrupoDiario.length, 2, "el grupo diario tiene solo las 2 filas diarias");
+assert.ok(enGrupoDiario.every((r) => r.scope === "daily"), "ninguna fila semanal se coló");
+console.log("✓ formar un grupo en un ámbito no arrastra la fila del otro ámbito");
 
 console.log("\nTodo OK");

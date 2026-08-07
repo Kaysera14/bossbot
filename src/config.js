@@ -29,10 +29,12 @@ export const GROUP_SIZE = 3;
 // Ponlo a GROUP_SIZE si solo quieres grupos completos.
 export const MIN_GROUP_SIZE = 2;
 
-// Una kill cuenta a la vez para la tarea diaria y la semanal, así que para
-// emparejar se mezclan las dos bolsas. El ámbito solo decide cuándo se borra
-// cada registro. Ponlo a false si prefieres grupos separados.
-export const MATCH_ACROSS_SCOPES = true;
+// Si alguien necesita el mismo jefe para la tarea diaria Y la semanal, ¿van
+// al mismo grupo (true) o a dos grupos separados, uno por ámbito (false)?
+// Separados es mejor cuando las runs necesarias no coinciden (p.ej. necesita
+// 2 kills diarias y 40 semanales: mezclarlas hace que el grupo entero tenga
+// que hacer 40 runs por esa persona).
+export const MATCH_ACROSS_SCOPES = false;
 
 export const TIMEZONE = "Europe/Madrid";
 
