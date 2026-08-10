@@ -4,6 +4,7 @@ import {
 	MIN_GROUP_SIZE,
 	GROUP_SIZE,
 	MATCH_ACROSS_SCOPES,
+	STALE_CLOSED_HOURS,
 } from "./config.js";
 import * as db from "./db.js";
 import {
@@ -126,7 +127,14 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 	if (!announceChannelId) return nuevos;
 
 	const anunciar = () =>
-		publicarAvisos(env, guildId, announceChannelId, nuevos, ampliados, completados);
+		publicarAvisos(
+			env,
+			guildId,
+			announceChannelId,
+			nuevos,
+			ampliados,
+			completados,
+		);
 	if (ctx) {
 		// Se responde ya y los mensajes salen justo después.
 		ctx.waitUntil(anunciar());
@@ -395,7 +403,8 @@ async function cmdConfigurar(i, env) {
 
 	// Prueba real: si el bot no puede escribir ahí, mejor saberlo ahora que
 	// descubrirlo cuando nadie reciba los avisos.
-	let prueba = "⚠️ **Sin canal configurado**: nadie recibirá avisos de grupo. Usa `/configurar canal:#tu-canal`.";
+	let prueba =
+		"⚠️ **Sin canal configurado**: nadie recibirá avisos de grupo. Usa `/configurar canal:#tu-canal`.";
 	if (nuevo.announceChannelId) {
 		const res = await postMessage(env.DISCORD_TOKEN, nuevo.announceChannelId, {
 			content: "✅ Canal de avisos configurado. Aquí se publicarán los grupos.",
@@ -848,11 +857,9 @@ export default {
 			}
 		}
 
-		for (const {
-			guildId,
-			scopes,
-			announceChannelId,
-		} of await db.applyResets(env.DB)) {
+		for (const { guildId, scopes, announceChannelId } of await db.applyResets(
+			env.DB,
+		)) {
 			// Un grupo mixto sobrevive al reset diario con sus miembros semanales:
 			// hay que recalcular runs, llaves y si sigue lleno.
 			await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
