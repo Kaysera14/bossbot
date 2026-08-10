@@ -99,8 +99,8 @@ export const groupButtons = (groupId, closed = false) => [
 ];
 
 /** Botones de acción para los grupos que salen en /grupo. */
-export function statusButtons(grupos) {
-	return grupos.slice(0, 4).map(({ group }) => ({
+export function statusButtons(grupos, cola = []) {
+	const filas = grupos.slice(0, 4).map(({ group }) => ({
 		type: 1,
 		components: [
 			...(group.closed
@@ -130,6 +130,24 @@ export function statusButtons(grupos) {
 			},
 		],
 	}));
+
+	// Sin esto, quien no tiene acceso a comandos de barra no podía borrar UN
+	// registro en cola concreto: solo existía "Hoy no puedo", que quita todo.
+	const huecosLibres = 5 - filas.length;
+	const filasCola = cola.slice(0, huecosLibres).map((r) => ({
+		type: 1,
+		components: [
+			{
+				type: 2,
+				custom_id: `s:cancel:${r.scope}:${r.boss}`,
+				label: `Quitar ${BOSSES[r.boss]?.label ?? r.boss} (${SCOPES[r.scope]?.label ?? r.scope})`,
+				emoji: { name: "🗑️" },
+				style: 2,
+			},
+		],
+	}));
+
+	return [...filas, ...filasCola];
 }
 
 export function statusEmbed(uid, grupos, cola, sinCanal = false) {

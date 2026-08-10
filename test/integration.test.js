@@ -458,4 +458,32 @@ assert.equal(enGrupoDiario.length, 2, "el grupo diario tiene solo las 2 filas di
 assert.ok(enGrupoDiario.every((r) => r.scope === "daily"), "ninguna fila semanal se coló");
 console.log("✓ formar un grupo en un ámbito no arrastra la fila del otro ámbito");
 
+/* --- 20. Botón "Quitar" en cola: acceso sin comandos de barra --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+await db.upsertReg(DB, G, "daily", { userId: "Q1", boss: "hades", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "weekly", { userId: "Q1", boss: "kronos", need: 5, keys: 1 });
+
+const { statusButtons } = await import("../src/ui.js");
+const colaQ1 = (await db.unassignedAll(DB, G)).filter((r) => r.userId === "Q1");
+const botonesQ1 = statusButtons([], colaQ1);
+const ids = botonesQ1.flatMap((r) => r.components.map((c) => c.custom_id));
+assert.ok(ids.some((id) => id === "s:cancel:daily:hades"), "botón para quitar Hades diario");
+assert.ok(ids.some((id) => id === "s:cancel:weekly:kronos"), "botón para quitar Cronos semanal");
+console.log("✓ cada registro en cola tiene su propio botón de quitar");
+
+// Simula pulsar el botón: solo borra ESE registro, el otro se queda intacto
+await db.removeReg(DB, G, "daily", "Q1", "hades");
+const quedaHades = await DB.prepare(
+  "SELECT * FROM regs WHERE user_id='Q1' AND boss='hades'",
+).first();
+const quedaKronos = await DB.prepare(
+  "SELECT * FROM regs WHERE user_id='Q1' AND boss='kronos'",
+).first();
+assert.equal(quedaHades, null, "Hades desaparece");
+assert.ok(quedaKronos, "Cronos se mantiene: quitar es preciso, no un /fuera encubierto");
+console.log("✓ quitar un registro no toca los demás");
+
 console.log("\nTodo OK");

@@ -323,7 +323,7 @@ async function verMiSituacion(env, guildId, uid) {
 	const { announceChannelId } = await db.getConfig(env.DB, guildId);
 	return {
 		embed: statusEmbed(uid, grupos, cola, !announceChannelId),
-		components: statusButtons(grupos),
+		components: statusButtons(grupos, cola),
 	};
 }
 
@@ -643,9 +643,19 @@ async function onModal(i, env, ctx) {
 async function onStatusButton(i, env, ctx) {
 	const gid = i.guild_id;
 	const uid = userId(i);
-	const [, action, idRaw] = i.data.custom_id.split(":");
-	const groupId = Number(idRaw);
+	const partes = i.data.custom_id.split(":");
+	const action = partes[1];
 
+	// "Quitar" de la cola tiene su propio formato: s:cancel:<scope>:<boss>
+	// (no lleva número de grupo, porque no hay grupo, solo una fila en cola).
+	if (action === "cancel") {
+		const [, , scope, boss] = partes;
+		await db.removeReg(env.DB, gid, scope, uid, boss);
+		const { embed, components } = await verMiSituacion(env, gid, uid);
+		return updateMessage({ embeds: [embed], components });
+	}
+
+	const groupId = Number(partes[2]);
 	const g = await db.getGroup(env.DB, gid, groupId);
 	if (g && g.regs.some((r) => r.userId === uid)) {
 		// Se guardan antes de tocar la BD: completeGroup borra la fila del
