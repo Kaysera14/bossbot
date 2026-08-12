@@ -5,6 +5,7 @@ import {
 	GROUP_SIZE,
 	MATCH_ACROSS_SCOPES,
 	STALE_CLOSED_HOURS,
+	STALE_CLOSED_WEEKLY_HOURS,
 } from "./config.js";
 import * as db from "./db.js";
 import {
@@ -127,14 +128,7 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 	if (!announceChannelId) return nuevos;
 
 	const anunciar = () =>
-		publicarAvisos(
-			env,
-			guildId,
-			announceChannelId,
-			nuevos,
-			ampliados,
-			completados,
-		);
+		publicarAvisos(env, guildId, announceChannelId, nuevos, ampliados, completados);
 	if (ctx) {
 		// Se responde ya y los mensajes salen justo después.
 		ctx.waitUntil(anunciar());
@@ -403,8 +397,7 @@ async function cmdConfigurar(i, env) {
 
 	// Prueba real: si el bot no puede escribir ahí, mejor saberlo ahora que
 	// descubrirlo cuando nadie reciba los avisos.
-	let prueba =
-		"⚠️ **Sin canal configurado**: nadie recibirá avisos de grupo. Usa `/configurar canal:#tu-canal`.";
+	let prueba = "⚠️ **Sin canal configurado**: nadie recibirá avisos de grupo. Usa `/configurar canal:#tu-canal`.";
 	if (nuevo.announceChannelId) {
 		const res = await postMessage(env.DISCORD_TOKEN, nuevo.announceChannelId, {
 			content: "✅ Canal de avisos configurado. Aquí se publicarán los grupos.",
@@ -836,11 +829,15 @@ export default {
 
 		// Grupos "ameba": cerrados hace mucho y nunca marcados como Completado.
 		// Se dan por hechos solos para no dejarlos acumulándose sin fin.
-		const rancios = await db.staleClosedGroups(
-			env.DB,
-			STALE_CLOSED_HOURS * 3600 * 1000,
-		);
+		// Diario y semanal usan ventanas distintas (ver config.js): un grupo
+		// semanal recién cerrado no puede desaparecer a las pocas horas.
+		const rancios = [
+			...(await db.staleClosedGroups(env.DB, STALE_CLOSED_HOURS * 3600 * 1000, "daily")),
+			...(await db.staleClosedGroups(env.DB, STALE_CLOSED_WEEKLY_HOURS * 3600 * 1000, "weekly")),
+			...(await db.staleClosedGroups(env.DB, STALE_CLOSED_WEEKLY_HOURS * 3600 * 1000, "mixto")),
+		];
 		for (const g of rancios) {
+			const horas = g.scope === "daily" ? STALE_CLOSED_HOURS : STALE_CLOSED_WEEKLY_HOURS;
 			await db.completeGroup(env.DB, g.guild_id, g.id);
 			if (g.channel_id && g.message_id) {
 				ctx.waitUntil(
@@ -849,7 +846,7 @@ export default {
 						// conviene dejar rastro) y se borra el original, igual que
 						// al completar un grupo a mano.
 						await sendMessage(env.DISCORD_TOKEN, g.channel_id, {
-							content: `⌛ Grupo #${g.id} (${BOSSES[g.boss]?.label ?? g.boss}) llevaba más de ${STALE_CLOSED_HOURS}h cerrado sin completarse: dado por hecho automáticamente.`,
+							content: `⌛ Grupo #${g.id} (${BOSSES[g.boss]?.label ?? g.boss}) llevaba más de ${horas}h cerrado sin completarse: dado por hecho automáticamente.`,
 						});
 						await deleteMessage(env.DISCORD_TOKEN, g.channel_id, g.message_id);
 					})(),
@@ -857,9 +854,11 @@ export default {
 			}
 		}
 
-		for (const { guildId, scopes, announceChannelId } of await db.applyResets(
-			env.DB,
-		)) {
+		for (const {
+			guildId,
+			scopes,
+			announceChannelId,
+		} of await db.applyResets(env.DB)) {
 			// Un grupo mixto sobrevive al reset diario con sus miembros semanales:
 			// hay que recalcular runs, llaves y si sigue lleno.
 			await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);

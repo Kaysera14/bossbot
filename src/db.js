@@ -374,14 +374,14 @@ export async function undersizedGroupsGlobal(db, min) {
  * Grupos cerrados desde hace más de `maxAgeMs` en TODOS los servidores.
  * Son los "grupos ameba": se cerraron pero nadie pulsó nunca Completado.
  */
-export async function staleClosedGroups(db, maxAgeMs) {
+export async function staleClosedGroups(db, maxAgeMs, scope = "daily") {
   const limite = Date.now() - maxAgeMs;
   const { results } = await db
     .prepare(
-      `SELECT id, guild_id, boss, channel_id, message_id
-         FROM groups WHERE closed=1 AND closed_at IS NOT NULL AND closed_at < ?`,
+      `SELECT id, guild_id, boss, scope, channel_id, message_id
+         FROM groups WHERE closed=1 AND closed_at IS NOT NULL AND closed_at < ? AND scope=?`,
     )
-    .bind(limite)
+    .bind(limite, scope)
     .all();
   return results;
 }

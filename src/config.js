@@ -20,7 +20,11 @@ export const SCOPES = {
 // Un grupo cerrado (lleno o bloqueado a mano) que lleva más de este tiempo
 // sin que nadie lo complete se autoborra en el siguiente reset diario. Evita
 // que se acumulen grupos "ameba" que ya nadie va a terminar.
+// Los diarios usan una ventana corta (caducan solos cada día de todas formas).
+// Los semanales usan una mucho más larga: organizarse para un jefe semanal
+// puede llevar días, y el reset semanal ya los limpia si nadie los completó.
 export const STALE_CLOSED_HOURS = 20;
+export const STALE_CLOSED_WEEKLY_HOURS = 7 * 24;
 
 // Tamaño objetivo de grupo (la wiki recomienda 3 con 90+ de combate).
 export const GROUP_SIZE = 3;

@@ -2,7 +2,8 @@ import assert from "node:assert";
 import fs from "node:fs";
 import { makeD1 } from "./d1-shim.js";
 import * as db from "../src/db.js";
-import { matchAndAnnounce, publicarPanel } from "../src/index.js";
+import { STALE_CLOSED_WEEKLY_HOURS } from "../src/config.js";
+import worker, { matchAndAnnounce, publicarPanel } from "../src/index.js";
 
 const G = "guild-1";
 const enviados = [];
@@ -485,5 +486,50 @@ const quedaKronos = await DB.prepare(
 assert.equal(quedaHades, null, "Hades desaparece");
 assert.ok(quedaKronos, "Cronos se mantiene: quitar es preciso, no un /fuera encubierto");
 console.log("✓ quitar un registro no toca los demás");
+
+/* --- 21. El cron de verdad (scheduled) arranca sin reventar --- */
+
+// Esto habría pillado el ReferenceError de STALE_CLOSED_HOURS sin importar:
+// node --check solo mira sintaxis, no variables no definidas en tiempo de
+// ejecución. Sin este test, un fallo así solo se ve en producción.
+try {
+  await worker.scheduled({}, env, { waitUntil: (p) => p });
+  console.log("✓ scheduled() se ejecuta sin lanzar excepción");
+} catch (err) {
+  throw new Error(`scheduled() ha reventado: ${err.message}`);
+}
+
+/* --- 22. Grupos ameba: diario caduca rápido, semanal espera casi la semana entera --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+await db.upsertReg(DB, G, "daily", { userId: "D1", boss: "zeus", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "D2", boss: "zeus", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "weekly", { userId: "W1", boss: "zeus", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "weekly", { userId: "W2", boss: "zeus", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+
+const g2Daily = await DB.prepare("SELECT * FROM groups WHERE scope='daily' AND boss='zeus'").first();
+const g2Weekly = await DB.prepare("SELECT * FROM groups WHERE scope='weekly' AND boss='zeus'").first();
+await db.updateGroup(DB, g2Daily.id, { runs: 1, keys: 2, closed: true, locked: true });
+await db.updateGroup(DB, g2Weekly.id, { runs: 1, keys: 2, closed: true, locked: true });
+
+// Los envejecemos 30h: eso ya caduca un diario, pero un semanal necesita 7 días.
+await DB.prepare("UPDATE groups SET closed_at=? WHERE id IN (?, ?)")
+  .bind(Date.now() - 30 * 3600 * 1000, g2Daily.id, g2Weekly.id)
+  .run();
+
+const rancioDiario = await db.staleClosedGroups(DB, 20 * 3600 * 1000, "daily");
+// Con la ventana REAL que usa la app (168h), un semanal de solo 30h está a
+// salvo: hace falta casi una semana entera para que se considere rancio.
+const rancioSemanalReal = await db.staleClosedGroups(DB, STALE_CLOSED_WEEKLY_HOURS * 3600 * 1000, "weekly");
+
+assert.ok(rancioDiario.some((g) => g.id === g2Daily.id), "el diario ya es rancio a las 30h");
+assert.ok(
+  !rancioSemanalReal.some((g) => g.id === g2Weekly.id),
+  "el semanal, con su ventana real de casi una semana, sigue a salvo a las 30h",
+);
+console.log("✓ el barrido de grupos ameba respeta ventanas distintas por ámbito");
 
 console.log("\nTodo OK");
