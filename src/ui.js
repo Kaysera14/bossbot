@@ -278,17 +278,21 @@ export function openRequestsEmbed(gruposAbiertos, cola) {
 		};
 	});
 
-	// Un botón "Unirme" por cada (ámbito, jefe) que tenga un grupo con hueco
-	// de verdad — a la cola pura no hay a qué unirse todavía, solo apuntarse.
-	const conHueco = entradas.filter((e) => e.grupos.length > 0).slice(0, 20);
+	// Un botón por cada (ámbito, jefe) con actividad: abre la misma ventanita
+	// de registro que "Me faltan jefes", solo que sin pasar por el desplegable
+	// porque el jefe ya se sabe. Da igual si ya hay grupo o solo cola: el
+	// botón no "entra" en nada mágicamente, solo te registra, así que es
+	// igual de útil para completar un grupo abierto que para ser el segundo
+	// de alguien que está solo esperando compañero.
+	const conActividad = entradas.slice(0, 20);
 	const components = [];
-	for (let i = 0; i < conHueco.length; i += 5) {
+	for (let i = 0; i < conActividad.length; i += 5) {
 		components.push({
 			type: 1,
-			components: conHueco.slice(i, i + 5).map(({ scope, boss }) => ({
+			components: conActividad.slice(i, i + 5).map(({ scope, boss, grupos }) => ({
 				type: 2,
 				custom_id: `o:join:${scope}:${boss}`,
-				label: `Unirme a ${BOSSES[boss].label} (${SCOPES[scope].label})`,
+				label: `${grupos.length ? "Unirme a" : "Apuntarme a"} ${BOSSES[boss].label} (${SCOPES[scope].label})`,
 				emoji: { name: "➕" },
 				style: 3,
 			})),

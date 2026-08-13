@@ -291,12 +291,15 @@ assert.ok(texto.includes("<@V1>") && texto.includes("<@V2>"), "con sus miembros"
 assert.ok(texto.includes("falta 1"), "y cuánta gente falta");
 assert.ok(texto.includes("Grifo") && texto.includes("En cola"), "y quién espera solo");
 
-// Y hay un botón "Unirme" para el grupo con hueco (Medusa), pero no para
-// Grifo, que solo tiene cola y ningún grupo al que unirse todavía.
-const botones = vista.components.flatMap((r) => r.components.map((c) => c.custom_id));
-assert.ok(botones.some((id) => id.includes("medusa")), "botón de unirse a Medusa");
-assert.ok(!botones.some((id) => id.includes("griffin")), "Grifo no tiene grupo, no hay botón");
-console.log("✓ solicitudes abiertas: grupos con hueco, gente en cola y botón de unirse");
+// Botón "Unirme" para el grupo con hueco (Medusa) y "Apuntarme" para Grifo,
+// que solo tiene cola: el botón no "entra" en nada, solo abre el registro,
+// así que sirve igual para completar un grupo que para ser el segundo.
+const botones = vista.components.flatMap((r) => r.components);
+const botonMedusa = botones.find((b) => b.custom_id.includes("medusa"));
+const botonGrifo = botones.find((b) => b.custom_id.includes("griffin"));
+assert.ok(botonMedusa?.label.startsWith("Unirme"), "Medusa: ya hay grupo, botón de unirse");
+assert.ok(botonGrifo?.label.startsWith("Apuntarme"), "Grifo: solo cola, botón de apuntarse");
+console.log("✓ solicitudes abiertas: botón de registro tanto en grupos abiertos como en cola");
 
 /* --- 14. Sin canal configurado, el bot no se calla --- */
 
