@@ -1,42 +1,29 @@
-import { BOSSES, SCOPES, GROUP_SIZE } from "./config.js";
+import { BOSSES } from "./config.js";
+import * as T from "./strings.js";
 
 /** Mensaje fijo con botones que se ancla en el canal. */
 export const panelMessage = () => ({
   embeds: [
     {
-      title: "🗡️ Grupos de jefes",
+      title: T.PANEL_TITLE,
       color: 0x4a6fa5,
-      description: [
-        "Pulsa un botón, no hace falta escribir nada.",
-        "",
-        "**Me faltan jefes** → dices qué jefe y cuántas kills te faltan.",
-        "**Mi grupo** → con quién vas y si te toca abrir puerta.",
-        "**Ver abiertas** → grupos a los que aún puedes entrar y quién espera.",
-        "**Hoy no puedo** → te saca de todos tus grupos de golpe.",
-        "",
-        `Los grupos son de ${GROUP_SIZE}. Se forman en cuanto hay gente y siguen abiertos hasta llenarse,`,
-        "así que puedes entrar en uno que ya existe. Cuando se llena se cierra solo, y si queréis empezar",
-        "antes siendo menos, cualquiera del grupo puede pulsar 🔒 **Cerrar grupo** (deja de admitir gente,",
-        "pero el grupo sigue existiendo). Cuando ya lo hayáis hecho, pulsad ✅ **Completado** para que",
-        "desaparezca del todo — si no lo pulsáis, el bot lo da por hecho solo pasadas 20 horas cerrado.",
-        "Los diarios se borran a las 02:00 y los semanales los lunes a las 02:00.",
-      ].join("\n"),
+      description: T.panelDescription(),
     },
   ],
   components: [
     {
       type: 1,
       components: [
-        { type: 2, custom_id: "p:add:daily", label: "Me faltan jefes (diario)", emoji: { name: "🌙" }, style: 1 },
-        { type: 2, custom_id: "p:add:weekly", label: "Semanal", emoji: { name: "📅" }, style: 1 },
+        { type: 2, custom_id: "p:add:daily", label: T.PANEL_BOTON_DIARIO, emoji: { name: "🌙" }, style: 1 },
+        { type: 2, custom_id: "p:add:weekly", label: T.PANEL_BOTON_SEMANAL, emoji: { name: "📅" }, style: 1 },
       ],
     },
     {
       type: 1,
       components: [
-        { type: 2, custom_id: "p:mine", label: "Mi grupo", emoji: { name: "👥" }, style: 2 },
-        { type: 2, custom_id: "p:open", label: "Ver abiertas", emoji: { name: "🔎" }, style: 2 },
-        { type: 2, custom_id: "p:out", label: "Hoy no puedo", emoji: { name: "🚫" }, style: 4 },
+        { type: 2, custom_id: "p:mine", label: T.PANEL_BOTON_MI_GRUPO, emoji: { name: "👥" }, style: 2 },
+        { type: 2, custom_id: "p:open", label: T.PANEL_BOTON_VER_ABIERTAS, emoji: { name: "🔎" }, style: 2 },
+        { type: 2, custom_id: "p:out", label: T.PANEL_BOTON_HOY_NO_PUEDO, emoji: { name: "🚫" }, style: 4 },
       ],
     },
   ],
@@ -44,7 +31,7 @@ export const panelMessage = () => ({
 
 /** Desplegable de jefes, paso 1 tras pulsar "Me faltan jefes". */
 export const bossSelect = (scope) => ({
-  content: `¿Qué jefe te falta? (${SCOPES[scope].label.toLowerCase()})`,
+  content: T.bossSelectContenido(scope),
   components: [
     {
       type: 1,
@@ -52,11 +39,11 @@ export const bossSelect = (scope) => ({
         {
           type: 3,
           custom_id: `sel:boss:${scope}`,
-          placeholder: "Elige un jefe",
+          placeholder: T.BOSS_SELECT_PLACEHOLDER,
           options: Object.entries(BOSSES).map(([value, b]) => ({
             label: b.label,
             value,
-            description: `Llave: ${b.key}`,
+            description: T.bossSelectOpcionDescripcion(value),
             emoji: { name: b.emoji },
           })),
         },
@@ -70,7 +57,7 @@ export const regModal = (scope, boss) => ({
   type: 9,
   data: {
     custom_id: `m:reg:${scope}:${boss}`,
-    title: `${BOSSES[boss].label} · ${SCOPES[scope].label}`,
+    title: T.regModalTitulo(scope, boss),
     components: [
       {
         type: 1,
@@ -78,11 +65,11 @@ export const regModal = (scope, boss) => ({
           {
             type: 4,
             custom_id: "cantidad",
-            label: "¿Cuántas kills te faltan?",
+            label: T.MODAL_CANTIDAD_LABEL,
             style: 1,
             required: true,
             max_length: 3,
-            placeholder: "Pon 0 si solo vienes a ayudar",
+            placeholder: T.MODAL_CANTIDAD_PLACEHOLDER,
             value: "1",
           },
         ],
@@ -93,11 +80,11 @@ export const regModal = (scope, boss) => ({
           {
             type: 4,
             custom_id: "llaves",
-            label: `¿Cuántas ${BOSSES[boss].key} tienes?`,
+            label: T.modalLlavesLabel(boss),
             style: 1,
             required: true,
             max_length: 3,
-            placeholder: "0 si no tienes ninguna",
+            placeholder: T.MODAL_LLAVES_PLACEHOLDER,
             value: "0",
           },
         ],

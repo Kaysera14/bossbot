@@ -12,6 +12,26 @@ _(aquí se irán añadiendo las entradas de lo que pidas a partir de ahora)_
 
 ---
 
+## 2026-08-13 — Todos los textos del bot centralizados en un solo archivo
+
+### Añadido
+
+- `src/strings.js`: archivo único con todos los textos que ve la gente en
+  Discord (más de 90 mensajes, botones, títulos y avisos). Para cambiar
+  cualquier texto del bot, ya no hace falta tocar la lógica — se edita ahí
+  y punto.
+
+### Cambiado
+
+- `index.js`, `ui.js`, `panel.js` y `discord.js` ya no contienen texto
+  suelto: todos llaman a `T.algo` en vez de escribir el mensaje directamente.
+- Sin cambios de comportamiento: los 48 tests existentes pasan tal cual,
+  confirmando que el refactor no ha alterado ningún mensaje ni lógica.
+
+### Notas de despliegue
+
+- Sin migración, sin registrar comandos. Solo `npm test` + `npm run deploy`.
+
 ## 2026-08-12 (2) — Botón de registro también para quien está solo en cola
 
 ### Cambiado

@@ -1,3 +1,5 @@
+import { MOTIVO_SIN_PERMISO, MOTIVO_CANAL_INEXISTENTE, motivoErrorGenerico } from "./strings.js";
+
 const API = "https://discord.com/api/v10";
 
 const hex2bytes = (hex) =>
@@ -87,10 +89,10 @@ export async function postMessage(token, channelId, payload) {
     const texto = await res.text();
     const motivo =
       res.status === 403
-        ? "el bot no tiene permiso para escribir ahí (necesita Enviar mensajes e Insertar enlaces)"
+        ? MOTIVO_SIN_PERMISO
         : res.status === 404
-          ? "ese canal no existe o el bot no lo ve"
-          : `error ${res.status}: ${texto.slice(0, 150)}`;
+          ? MOTIVO_CANAL_INEXISTENTE
+          : motivoErrorGenerico(res.status, texto.slice(0, 150));
     return { ok: false, motivo };
   } catch (err) {
     return { ok: false, motivo: String(err?.message ?? err) };

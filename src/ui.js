@@ -1,6 +1,7 @@
 import { BOSSES, SCOPES, GROUP_SIZE } from "./config.js";
 import { keyPlan, groupStats, dedupePool } from "./matchmaker.js";
 import { nextDailyReset, discordTime } from "./time.js";
+import * as T from "./strings.js";
 
 const VERDE = 0x2b9348;
 const AMBAR = 0xd9822b;
@@ -15,53 +16,44 @@ export function groupEmbed(groupId, boss, regsBruto, closed = false) {
 	const plan = keyPlan(regs, runs);
 
 	const faltan = GROUP_SIZE - regs.length;
-	const estado = closed
-		? "🔒 Cerrado"
-		: `🟢 Abierto — ${faltan > 0 ? `falta${faltan === 1 ? "" : "n"} ${faltan}` : "completo"}`;
 
 	const fields = [
 		{
-			name: `Miembros (${regs.length}/${GROUP_SIZE}) · ${estado}`,
+			name: `Miembros (${regs.length}/${GROUP_SIZE}) · ${T.estadoMiembros(closed, faltan)}`,
 			value:
 				regs
-					.map(
-						(r) =>
-							`• <@${r.userId}> ${(r.scopes ?? [r.scope]).map((sc) => SCOPES[sc]?.emoji ?? "").join("")} — ` +
-							`${r.support ? "apoyo" : `${r.need} kill${r.need === 1 ? "" : "s"}`} · 🔑 ${r.keys}`,
+					.map((r) =>
+						T.lineaMiembro(
+							r.userId,
+							(r.scopes ?? [r.scope]).map((sc) => SCOPES[sc]?.emoji ?? "").join(""),
+							r,
+						),
 					)
-					.join("\n") || "—",
+					.join("\n") || T.SIN_MIEMBROS,
 		},
-		{ name: "Runs necesarias", value: String(runs), inline: true },
-		{ name: `Llaves (${b.key})`, value: String(keys), inline: true },
+		{ name: T.CAMPO_RUNS_NECESARIAS, value: String(runs), inline: true },
+		{ name: T.campoLlaves(boss), value: String(keys), inline: true },
 		{
-			name: "Abre puertas",
+			name: T.CAMPO_ABRE_PUERTAS,
 			value: plan.length
-				? plan.map((p) => `<@${p.userId}> ×${p.use}`).join(", ")
-				: "_nadie tiene llaves_",
+				? plan.map((p) => T.lineaAbrePuertas(p.userId, p.use)).join(", ")
+				: T.NADIE_TIENE_LLAVES,
 		},
 	];
 
 	if (deficit) {
-		fields.push({
-			name: "⚠️ Faltan llaves",
-			value: `Necesitáis ${deficit} ${b.key} más. Usad \`/apoyo\` o pedidlas en el clan.`,
-		});
+		fields.push({ name: T.CAMPO_FALTAN_LLAVES, value: T.faltanLlavesTexto(deficit, boss) });
 	}
 
 	if (!closed && faltan > 0) {
-		fields.push({
-			name: "\u200b",
-			value: `Sigue abierto: si alguien más se apunta a ${b.label} entrará aquí.`,
-		});
+		fields.push({ name: "\u200b", value: T.sigueAbiertoTexto(boss) });
 	}
 
 	return {
-		title: `${b.emoji} ${b.label} · Grupo #${groupId}`,
+		title: T.groupEmbedTitulo(boss, groupId),
 		color: deficit ? AMBAR : VERDE,
 		fields,
-		footer: {
-			text: "Para cerrar, marcar completado o salir del grupo, usa /grupo (solo lo ven sus miembros)",
-		},
+		footer: { text: T.GROUP_EMBED_FOOTER },
 	};
 }
 
@@ -72,7 +64,7 @@ export const groupButtons = (groupId, closed = false) => [
 			{
 				type: 2,
 				custom_id: `g:done:${groupId}`,
-				label: "Completado",
+				label: T.BOTON_COMPLETADO,
 				emoji: { name: "✅" },
 				style: 3,
 			},
@@ -82,7 +74,7 @@ export const groupButtons = (groupId, closed = false) => [
 						{
 							type: 2,
 							custom_id: `g:lock:${groupId}`,
-							label: "Cerrar grupo",
+							label: T.BOTON_CERRAR_GRUPO,
 							emoji: { name: "🔒" },
 							style: 1,
 						},
@@ -90,7 +82,7 @@ export const groupButtons = (groupId, closed = false) => [
 			{
 				type: 2,
 				custom_id: `g:leave:${groupId}`,
-				label: "Salir del grupo",
+				label: T.BOTON_SALIR_DEL_GRUPO,
 				emoji: { name: "🚪" },
 				style: 4,
 			},
@@ -109,7 +101,7 @@ export function statusButtons(grupos, cola = []) {
 						{
 							type: 2,
 							custom_id: `s:lock:${group.id}`,
-							label: `Cerrar #${group.id}`,
+							label: T.botonCerrarNum(group.id),
 							emoji: { name: "🔒" },
 							style: 1,
 						},
@@ -117,14 +109,14 @@ export function statusButtons(grupos, cola = []) {
 			{
 				type: 2,
 				custom_id: `s:done:${group.id}`,
-				label: `Completado #${group.id}`,
+				label: T.botonCompletadoNum(group.id),
 				emoji: { name: "✅" },
 				style: 3,
 			},
 			{
 				type: 2,
 				custom_id: `s:leave:${group.id}`,
-				label: `Salir de #${group.id}`,
+				label: T.botonSalirNum(group.id),
 				emoji: { name: "🚪" },
 				style: 4,
 			},
@@ -140,7 +132,7 @@ export function statusButtons(grupos, cola = []) {
 			{
 				type: 2,
 				custom_id: `s:cancel:${r.scope}:${r.boss}`,
-				label: `Quitar ${BOSSES[r.boss]?.label ?? r.boss} (${SCOPES[r.scope]?.label ?? r.scope})`,
+				label: T.botonQuitarCola(r.boss, r.scope),
 				emoji: { name: "🗑️" },
 				style: 2,
 			},
@@ -160,24 +152,25 @@ export function statusEmbed(uid, grupos, cola, sinCanal = false) {
 		const yo = regs.find((r) => r.userId === uid);
 		const mio = keyPlan(regs, runs).find((p) => p.userId === uid);
 		const faltan = GROUP_SIZE - regs.length;
-		const estado = group.closed
-			? "🔒 cerrado"
-			: `🟢 abierto${faltan > 0 ? `, falta${faltan === 1 ? "" : "n"} ${faltan}` : ""}`;
 
 		fields.push({
-			name: `${b.emoji} ${b.label} · ${SCOPES[yo?.scope]?.label ?? ""} · Grupo #${group.id} (${regs.length}/${GROUP_SIZE}) ${estado}`,
+			name: T.tituloGrupoStatus(
+				group.boss,
+				SCOPES[yo?.scope]?.label ?? "",
+				group.id,
+				regs.length,
+				T.estadoStatus(group.closed, faltan),
+			),
 			value: [
-				`Compañeros: ${
+				T.companerosTexto(
 					regs
 						.filter((r) => r.userId !== uid)
 						.map((r) => `<@${r.userId}>`)
-						.join(", ") || "—"
-				}`,
-				`Runs del grupo: **${runs}** (tú necesitas ${yo?.need ?? 0})`,
-				mio
-					? `🔑 Te toca abrir **${mio.use}** puerta(s) con ${b.key}`
-					: "🔑 Tú no abres: entras invitado",
-				deficit ? `⚠️ Faltan ${deficit} llaves en el grupo` : null,
+						.join(", "),
+				),
+				T.runsDelGrupoTexto(runs, yo?.need ?? 0),
+				mio ? T.abrePuertasTexto(mio.use, group.boss) : T.NO_ABRES_INVITADO,
+				deficit ? T.faltanLlavesEnGrupo(deficit) : null,
 			]
 				.filter(Boolean)
 				.join("\n"),
@@ -185,37 +178,27 @@ export function statusEmbed(uid, grupos, cola, sinCanal = false) {
 	}
 
 	for (const r of cola) {
-		const b = BOSSES[r.boss];
 		fields.push({
-			name: `${b.emoji} ${b.label} · ${SCOPES[r.scope].label}`,
-			value: `⏳ En cola — ${r.support ? "apoyo" : `${r.need} kills`} · 🔑 ${r.keys}\nEsperando a que se apunte más gente.`,
+			name: T.tituloColaStatus(r.boss, SCOPES[r.scope].label),
+			value: T.enColaTexto(r.support, r.need, r.keys),
 		});
 	}
 
 	if (!fields.length) {
 		return {
-			title: "Tu situación",
+			title: T.STATUS_TITULO,
 			color: AZUL,
-			description:
-				"No tienes nada registrado. Usa `/boss` para apuntar un jefe o `/apoyo` si solo tienes llaves.",
-			footer: sinCanal
-				? {
-						text: "⚠️ Sin canal de avisos: nadie recibe notificaciones. Que un admin use /configurar",
-					}
-				: undefined,
+			description: T.STATUS_SIN_NADA,
+			footer: sinCanal ? { text: T.STATUS_FOOTER_SIN_CANAL } : undefined,
 		};
 	}
 
 	return {
-		title: "Tu situación",
+		title: T.STATUS_TITULO,
 		color: AZUL,
-		description: `Próximo reset diario: ${discordTime(nextDailyReset())}`,
+		description: T.statusProximoReset(discordTime(nextDailyReset())),
 		fields,
-		footer: {
-			text: sinCanal
-				? "⚠️ Sin canal de avisos: nadie recibe notificaciones. Que un admin use /configurar"
-				: "Los diarios se borran a las 02:00; los semanales, los lunes a las 02:00",
-		},
+		footer: { text: sinCanal ? T.STATUS_FOOTER_SIN_CANAL : T.STATUS_FOOTER_NORMAL },
 	};
 }
 
@@ -249,31 +232,32 @@ export function openRequestsEmbed(gruposAbiertos, cola) {
 	const entradas = Object.values(porClave).slice(0, 25);
 
 	const fields = entradas.map(({ scope, boss, grupos, espera }) => {
-		const b = BOSSES[boss];
 		const lineas = [];
 
 		for (const { group, regs } of grupos) {
 			const faltan = GROUP_SIZE - regs.length;
 			lineas.push(
-				`**#${group.id}** (${regs.length}/${GROUP_SIZE}) — ` +
-					`${regs.map((r) => `<@${r.userId}>`).join(", ")} · ` +
-					`falta${faltan === 1 ? "" : "n"} ${faltan}`,
+				T.lineaGrupoAbierto(
+					group.id,
+					regs.length,
+					regs.map((r) => `<@${r.userId}>`).join(", "),
+					faltan,
+				),
 			);
 		}
 
 		if (espera.length) {
 			lineas.push(
-				`⏳ En cola: ${espera
-					.map(
-						(r) =>
-							`<@${r.userId}> (${r.support || r.need === 0 ? "apoyo" : `${r.need}`} · 🔑 ${r.keys})`,
-					)
-					.join(", ")}`,
+				T.lineaEsperaTexto(
+					espera
+						.map((r) => T.esperaPersonaTexto(r.userId, r.support || r.need === 0, r.need, r.keys))
+						.join(", "),
+				),
 			);
 		}
 
 		return {
-			name: `${b.emoji} ${b.label} · ${SCOPES[scope]?.emoji ?? ""} ${SCOPES[scope]?.label ?? ""}`,
+			name: T.tituloJefeAmbito(boss, SCOPES[scope]?.emoji ?? "", SCOPES[scope]?.label ?? ""),
 			value: lineas.join("\n").slice(0, 1024) || "—",
 		};
 	});
@@ -292,7 +276,7 @@ export function openRequestsEmbed(gruposAbiertos, cola) {
 			components: conActividad.slice(i, i + 5).map(({ scope, boss, grupos }) => ({
 				type: 2,
 				custom_id: `o:join:${scope}:${boss}`,
-				label: `${grupos.length ? "Unirme a" : "Apuntarme a"} ${BOSSES[boss].label} (${SCOPES[scope].label})`,
+				label: T.botonUnirseLabel(grupos.length > 0, boss, SCOPES[scope].label),
 				emoji: { name: "➕" },
 				style: 3,
 			})),
@@ -301,25 +285,18 @@ export function openRequestsEmbed(gruposAbiertos, cola) {
 
 	if (!fields.length) {
 		return {
-			embed: {
-				title: "🔎 Solicitudes abiertas",
-				color: AZUL,
-				description:
-					"No hay ningún grupo abierto ni nadie en cola. Apúntate con **Me faltan jefes** y serás el primero.",
-			},
+			embed: { title: T.OPEN_REQUESTS_TITULO, color: AZUL, description: T.OPEN_REQUESTS_VACIO },
 			components: [],
 		};
 	}
 
 	return {
 		embed: {
-			title: "🔎 Solicitudes abiertas",
+			title: T.OPEN_REQUESTS_TITULO,
 			color: AZUL,
-			description:
-				"Grupos a los que aún se puede entrar. Pulsa **Unirme** o apúntate con " +
-				"**Me faltan jefes** y el bot te mete en uno automáticamente.",
+			description: T.OPEN_REQUESTS_DESCRIPCION,
 			fields,
-			footer: { text: "Los grupos se cierran solos al llegar a 3" },
+			footer: { text: T.OPEN_REQUESTS_FOOTER },
 		},
 		components,
 	};

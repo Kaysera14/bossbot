@@ -23,6 +23,7 @@ import {
 	openRequestsEmbed,
 } from "./ui.js";
 import { panelMessage, bossSelect, regModal, modalValue } from "./panel.js";
+import * as T from "./strings.js";
 import {
 	verifyRequest,
 	InteractionType,
@@ -176,18 +177,19 @@ async function publicarAvisos(
 		if (!g) continue;
 
 		const miembros = [...new Set(g.regs.map((r) => r.userId))];
-		const b = BOSSES[g.group.boss];
 		const { runs } = groupStats(g.regs);
 		const plan = keyPlan(g.regs, runs);
 
 		await sendMessage(env.DISCORD_TOKEN, announceChannelId, {
-			content:
-				`🔒 **Grupo #${id} completo** — ${b.emoji} ${b.label}\n` +
-				`${miembros.map((u) => `<@${u}>`).join(" ")}\n` +
-				`Necesitáis **${runs}** run(s). ` +
-				(plan.length
-					? `Abre puertas: ${plan.map((p) => `<@${p.userId}> ×${p.use}`).join(", ")}.`
-					: "⚠️ Nadie tiene llaves: pedid una en el clan."),
+			content: T.grupoCompletoTexto(
+				id,
+				g.group.boss,
+				miembros.map((u) => `<@${u}>`).join(" "),
+				runs,
+				plan.length
+					? T.abrePuertasResumen(plan.map((p) => T.lineaAbrePuertas(p.userId, p.use)).join(", "))
+					: T.NADIE_TIENE_LLAVES_PEDIR,
+			),
 			allowed_mentions: { users: miembros },
 		});
 	}
@@ -213,8 +215,7 @@ export async function limpiarYRecolocar(env, guildId) {
 		await db.dissolveGroup(env.DB, guildId, g.id);
 		if (g.message_id) {
 			await editMessage(env.DISCORD_TOKEN, g.channel_id, g.message_id, {
-				content:
-					"♻️ Grupo deshecho por una baja. Sus miembros vuelven a la cola.",
+				content: T.GRUPO_DESHECHO_POR_BAJA,
 				embeds: [],
 				components: [],
 			});
@@ -236,10 +237,9 @@ async function registrar(env, guildId, uid, scope, boss, need, keys, ctx) {
 		support,
 	});
 
-	const b = BOSSES[boss];
 	const linea = support
-		? `Apuntado como **apoyo** para ${b.emoji} ${b.label} (${SCOPES[scope].label}) con 🔑 ${keys} ${b.key}.`
-		: `Registrado: ${b.emoji} **${b.label}** ×${need} (${SCOPES[scope].label}) con 🔑 ${keys} ${b.key}.`;
+		? T.registradoApoyo(boss, SCOPES[scope].label, keys)
+		: T.registradoNecesita(boss, SCOPES[scope].label, need, keys);
 
 	await matchAndAnnounce(env, guildId, ctx);
 
@@ -247,34 +247,23 @@ async function registrar(env, guildId, uid, scope, boss, need, keys, ctx) {
 	const tras = await db.getReg(env.DB, guildId, scope, uid, boss);
 	if (!tras?.groupId) {
 		const { announceChannelId } = await db.getConfig(env.DB, guildId);
-		return (
-			`${linea}\n⏳ Aún no hay suficiente gente. Se te avisará en cuanto se forme el grupo.` +
-			(announceChannelId
-				? ""
-				: "\n⚠️ Ojo: no hay canal de avisos configurado, así que ese aviso no llegará. Que un admin use `/configurar canal:#canal`.")
-		);
+		return `${linea}\n${T.AUN_NO_HAY_GENTE}${announceChannelId ? "" : T.AVISO_SIN_CANAL_COLA}`;
 	}
 
 	const { announceChannelId } = await db.getConfig(env.DB, guildId);
-	const sinCanal = announceChannelId
-		? ""
-		: "\n⚠️ No hay canal de avisos configurado, así que tus compañeros **no recibirán notificación**. Que un admin use `/configurar canal:#canal`.";
+	const sinCanal = announceChannelId ? "" : T.AVISO_SIN_CANAL_GRUPO;
 
 	const g = await db.getGroup(env.DB, guildId, tras.groupId);
 	const faltan = GROUP_SIZE - (dedupePool(g?.regs ?? []).length ?? 0);
-	return `${sinCanal}${linea}\n✅ Estás en el **grupo #${tras.groupId}**${
-		g?.group.closed || faltan <= 0
-			? " (completo)"
-			: `, a la espera de ${faltan} más`
-	}. Pulsa "Mi grupo" para los detalles.${sinCanal}`;
+	const completo = !!(g?.group.closed || faltan <= 0);
+	return `${sinCanal}${linea}\n${T.estasEnGrupoTexto(tras.groupId, completo, faltan)}${sinCanal}`;
 }
 
 /* ---------- salir de todo ---------- */
 
 async function salirDeTodo(env, guildId, uid, ctx) {
 	const borrados = await db.removeAllRegs(env.DB, guildId, uid);
-	if (!borrados.length)
-		return "No estabas apuntado a nada, así que no hay nada que quitar.";
+	if (!borrados.length) return T.NO_APUNTADO_A_NADA;
 
 	const grupos = [...new Set(borrados.map((r) => r.groupId).filter(Boolean))];
 
@@ -288,15 +277,11 @@ async function salirDeTodo(env, guildId, uid, ctx) {
 		})(),
 	);
 
-	const lista = borrados
-		.map((r) => `${BOSSES[r.boss].label} (${SCOPES[r.scope].label})`)
-		.join(", ");
+	const lista = borrados.map((r) => `${BOSSES[r.boss].label} (${SCOPES[r.scope].label})`).join(", ");
 	return [
-		`🚫 Fuera de todo: ${lista}.`,
-		grupos.length
-			? `Aviso a tus ${grupos.length === 1 ? "compañeros" : "grupos"} y recoloco a quien se quede colgado.`
-			: "No estabas en ningún grupo formado, solo en cola.",
-		"Cuando vuelvas a estar disponible, apúntate otra vez.",
+		T.fueraDeTodoTexto(lista),
+		grupos.length ? T.avisoGruposTexto(grupos.length) : T.SOLO_EN_COLA,
+		T.CUANDO_VUELVAS,
 	].join("\n");
 }
 
@@ -368,7 +353,7 @@ async function cmdQuitar(i, env, ctx) {
 		userId(i),
 		o.jefe,
 	);
-	if (!res) return reply("No tenías nada registrado ahí.");
+	if (!res) return reply(T.NO_TENIAS_NADA_AHI);
 
 	ctx.waitUntil(
 		(async () => {
@@ -379,14 +364,12 @@ async function cmdQuitar(i, env, ctx) {
 			await limpiarYRecolocar(env, i.guild_id);
 		})(),
 	);
-	return reply(
-		`Borrado tu registro de ${BOSSES[o.jefe].label} (${SCOPES[o.ambito].label}).`,
-	);
+	return reply(T.registroBorradoTexto(BOSSES[o.jefe].label, SCOPES[o.ambito].label));
 }
 
 async function cmdConfigurar(i, env) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
-	if (!isAdmin(i, cfg.adminRoleIds)) return reply("Solo admins.");
+	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
 
 	const o = opts(i);
 	const patch = {};
@@ -397,33 +380,33 @@ async function cmdConfigurar(i, env) {
 
 	// Prueba real: si el bot no puede escribir ahí, mejor saberlo ahora que
 	// descubrirlo cuando nadie reciba los avisos.
-	let prueba = "⚠️ **Sin canal configurado**: nadie recibirá avisos de grupo. Usa `/configurar canal:#tu-canal`.";
+	let prueba = T.CONFIGURAR_SIN_CANAL;
 	if (nuevo.announceChannelId) {
 		const res = await postMessage(env.DISCORD_TOKEN, nuevo.announceChannelId, {
-			content: "✅ Canal de avisos configurado. Aquí se publicarán los grupos.",
+			content: T.CONFIGURAR_MENSAJE_PRUEBA,
 		});
 		prueba = res.ok
-			? `✅ Prueba enviada a <#${nuevo.announceChannelId}>: los avisos funcionan.`
-			: `❌ **No he podido escribir en <#${nuevo.announceChannelId}>**: ${res.motivo}`;
+			? T.configurarPruebaOk(nuevo.announceChannelId)
+			: T.configurarPruebaError(nuevo.announceChannelId, res.motivo);
 	}
 
 	return reply(
 		[
-			`Canal de anuncios: ${nuevo.announceChannelId ? `<#${nuevo.announceChannelId}>` : "_sin configurar_"}`,
-			`Roles admin extra: ${nuevo.adminRoleIds.map((r) => `<@&${r}>`).join(", ") || "_ninguno_"}`,
+			T.configurarCanalLinea(nuevo.announceChannelId),
+			T.configurarRolesLinea(nuevo.adminRoleIds.map((r) => `<@&${r}>`).join(", ")),
 			"",
 			prueba,
 			"",
-			"Usa `/panel` en el canal para dejar el mensaje con los botones.",
+			T.CONFIGURAR_USA_PANEL,
 		].join("\n"),
 	);
 }
 
 async function cmdPanel(i, env) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
-	if (!isAdmin(i, cfg.adminRoleIds)) return reply("Solo admins.");
+	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
 	await publicarPanel(env, i.guild_id, i.channel_id);
-	return reply("Panel publicado más abajo. 👇", { ephemeral: true });
+	return reply(T.PANEL_PUBLICADO, { ephemeral: true });
 }
 
 /**
@@ -449,46 +432,42 @@ async function resumenCola(env, guildId) {
 	for (const r of pool) (porJefe[r.boss] ??= []).push(r);
 
 	return Object.entries(porJefe).map(([boss, regs]) => {
-		const b = BOSSES[boss];
 		const necesitan = regs.filter((r) => !r.support && r.need > 0);
 		const apoyos = regs.filter((r) => r.support || r.need === 0);
 		const llaves = regs.reduce((a, r) => a + r.keys, 0);
 
 		const motivo = !necesitan.length
-			? "nadie lo necesita, solo hay apoyos"
-			: `faltan ${Math.max(1, MIN_GROUP_SIZE - regs.length)} persona(s)`;
+			? T.nadieLoNecesita
+			: T.faltanPersonasTexto(Math.max(1, MIN_GROUP_SIZE - regs.length));
 
-		return (
-			`${b.emoji} **${b.label}**: ${necesitan.length} lo necesitan, ` +
-			`${apoyos.length} de apoyo, 🔑 ${llaves} — ${motivo}`
-		);
+		return T.resumenColaJefeTexto(boss, necesitan.length, apoyos.length, llaves, motivo);
 	});
 }
 
 async function cmdEmparejar(i, env, ctx) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
-	if (!isAdmin(i, cfg.adminRoleIds)) return reply("Solo admins.");
+	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
 
 	const creados = await matchAndAnnounce(env, i.guild_id, ctx);
 	const cola = await resumenCola(env, i.guild_id);
-	const avisoCanal = cfg.announceChannelId
-		? ""
-		: "\n⚠️ **Sin canal de avisos**: nadie está recibiendo notificaciones. Usa `/configurar canal:#canal`.";
+	const avisoCanal = cfg.announceChannelId ? "" : T.AVISO_SIN_CANAL_EMPAREJAR;
 
-	const grupos = (await db.allGroups(env.DB, i.guild_id)).map(
-		(g) =>
-			`· #${g.id} ${BOSSES[g.boss]?.emoji ?? ""} ${BOSSES[g.boss]?.label ?? g.boss} — ` +
-			`${g.n}/${GROUP_SIZE} · ${g.closed ? (g.locked ? "🔒 cerrado a mano" : "🔒 completo") : "🟢 abierto"}`,
+	const grupos = (await db.allGroups(env.DB, i.guild_id)).map((g) =>
+		T.lineaGrupoResumen(
+			g.id,
+			BOSSES[g.boss]?.emoji ?? "",
+			BOSSES[g.boss]?.label ?? g.boss,
+			g.n,
+			T.estadoGrupoResumen(g.closed, g.locked),
+		),
 	);
 
 	return reply(
 		[
-			creados.length
-				? `✅ Formados ${creados.length} grupo(s) nuevos.`
-				: "No se ha podido formar ningún grupo nuevo.",
-			grupos.length ? "\n**Grupos ahora mismo:**" : "",
+			creados.length ? T.formadosGruposTexto(creados.length) : T.noSeHanFormadoGrupos,
+			grupos.length ? T.GRUPOS_AHORA_MISMO : "",
 			...grupos,
-			cola.length ? "\n**En cola:**" : "\nNo queda nadie en cola.",
+			cola.length ? T.EN_COLA_TITULO : T.NO_QUEDA_NADIE_EN_COLA,
 			...cola,
 			avisoCanal,
 		]
@@ -503,49 +482,42 @@ async function cmdEmparejar(i, env, ctx) {
  */
 async function cmdBorrarGrupos(i, env) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
-	if (!isAdmin(i, cfg.adminRoleIds)) return reply("Solo admins.");
+	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
 
 	const grupos = await db.allGroups(env.DB, i.guild_id);
-	if (!grupos.length) return reply("No hay ningún grupo formado ahora mismo.");
+	if (!grupos.length) return reply(T.NO_HAY_GRUPOS_AHORA);
 
 	const detalle = grupos
-		.map(
-			(g) =>
-				`\u00b7 #${g.id} — ${BOSSES[g.boss]?.label ?? g.boss} (${g.n} persona${g.n === 1 ? "" : "s"})`,
-		)
+		.map((g) => T.lineaBorrarGrupo(g.id, BOSSES[g.boss]?.label ?? g.boss, g.n))
 		.join("\n");
 
-	return reply(
-		`Vas a deshacer **${grupos.length} grupo(s)**:\n${detalle}\n\n` +
-			"Nadie pierde su registro: todos vuelven a la cola y se pueden volver a emparejar. ¿Seguro?",
-		{
-			components: [
-				{
-					type: 1,
-					components: [
-						{
-							type: 2,
-							custom_id: "adm:wipe",
-							label: `Sí, deshacer ${grupos.length}`,
-							emoji: { name: "💥" },
-							style: 4,
-						},
-						{ type: 2, custom_id: "adm:cancel", label: "Cancelar", style: 2 },
-					],
-				},
-			],
-		},
-	);
+	return reply(T.confirmarBorrarTexto(grupos.length, detalle), {
+		components: [
+			{
+				type: 1,
+				components: [
+					{
+						type: 2,
+						custom_id: "adm:wipe",
+						label: T.botonConfirmarBorrar(grupos.length),
+						emoji: { name: "💥" },
+						style: 4,
+					},
+					{ type: 2, custom_id: "adm:cancel", label: T.BOTON_CANCELAR, style: 2 },
+				],
+			},
+		],
+	});
 }
 
 async function onAdminButton(i, env) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
-	if (!isAdmin(i, cfg.adminRoleIds)) return reply("Solo admins.");
+	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
 
 	const [, action] = i.data.custom_id.split(":");
 	if (action === "cancel") {
 		return updateMessage({
-			content: "Cancelado, no he tocado nada.",
+			content: T.CANCELADO_NO_TOCADO,
 			embeds: [],
 			components: [],
 		});
@@ -557,16 +529,14 @@ async function onAdminButton(i, env) {
 	for (const g of grupos) {
 		if (!g.message_id) continue;
 		await editMessage(env.DISCORD_TOKEN, g.channel_id, g.message_id, {
-			content: `💥 Grupo #${g.id} deshecho por un admin. Sus miembros vuelven a la cola.`,
+			content: T.grupoDeshechoAdminTexto(g.id),
 			embeds: [],
 			components: [],
 		});
 	}
 
 	return updateMessage({
-		content:
-			`💥 Deshechos ${grupos.length} grupo(s). Todo el mundo vuelve a la cola con su registro intacto.\n` +
-			"Usa `/emparejar` para volver a formarlos, o espera a que se apunte alguien.",
+		content: T.deshechosResumenTexto(grupos.length),
 		embeds: [],
 		components: [],
 	});
@@ -574,12 +544,10 @@ async function onAdminButton(i, env) {
 
 async function cmdReset(i, env) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
-	if (!isAdmin(i, cfg.adminRoleIds)) return reply("Solo admins.");
+	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
 	const o = opts(i);
 	await db.wipeScope(env.DB, i.guild_id, o.ambito);
-	return reply(
-		`Reset manual de ${SCOPES[o.ambito].label.toLowerCase()}s hecho.`,
-	);
+	return reply(T.resetHechoTexto(SCOPES[o.ambito].label));
 }
 
 /* ---------- botones del panel ---------- */
@@ -602,7 +570,7 @@ async function onPanel(i, env, ctx) {
 	}
 	if (action === "out")
 		return reply(await salirDeTodo(env, i.guild_id, uid, ctx));
-	return reply("Botón desconocido.");
+	return reply(T.BOTON_DESCONOCIDO);
 }
 
 /** Elegir jefe en el desplegable abre el modal con las dos cifras. */
@@ -631,9 +599,7 @@ async function onModal(i, env, ctx) {
 		need > 999 ||
 		keys > 999
 	) {
-		return reply(
-			"Esos números no me cuadran. Pon cifras entre 0 y 999, por ejemplo 2 y 1.",
-		);
+		return reply(T.MODAL_NUMEROS_INVALIDOS);
 	}
 	return reply(
 		await registrar(env, i.guild_id, userId(i), scope, boss, need, keys, ctx),
@@ -703,11 +669,11 @@ async function onGroupButton(i, env, ctx) {
 	const groupId = Number(idRaw);
 
 	const g = await db.getGroup(env.DB, gid, groupId);
-	if (!g) return reply("Ese grupo ya no existe.");
+	if (!g) return reply(T.GRUPO_YA_NO_EXISTE);
 
 	const cfg = await db.getConfig(env.DB, gid);
 	if (!g.regs.some((r) => r.userId === uid) && !isAdmin(i, cfg.adminRoleIds)) {
-		return reply("No eres de este grupo.");
+		return reply(T.NO_ERES_DE_ESTE_GRUPO);
 	}
 
 	if (action === "lock") {
@@ -744,7 +710,7 @@ async function onGroupButton(i, env, ctx) {
 		});
 	}
 
-	return reply("Botón desconocido.");
+	return reply(T.BOTON_DESCONOCIDO);
 }
 
 /* ---------- enrutado ---------- */
@@ -765,7 +731,7 @@ const COMANDOS = {
 async function handleInteraction(i, env, ctx) {
 	if (i.type === InteractionType.PING) return json({ type: CallbackType.PONG });
 	if (!i.guild_id)
-		return reply("Este bot solo funciona dentro de un servidor.");
+		return reply(T.SOLO_SERVIDOR);
 
 	await db.ensureSchema(env.DB);
 	await db.ensureGuild(env.DB, i.guild_id);
@@ -773,7 +739,7 @@ async function handleInteraction(i, env, ctx) {
 
 	if (i.type === InteractionType.COMMAND) {
 		const fn = COMANDOS[i.data.name];
-		return fn ? fn(i, env, ctx) : reply("Comando desconocido.");
+		return fn ? fn(i, env, ctx) : reply(T.COMANDO_DESCONOCIDO);
 	}
 
 	if (i.type === InteractionType.COMPONENT) {
@@ -796,7 +762,7 @@ async function handleInteraction(i, env, ctx) {
 export default {
 	async fetch(request, env, ctx) {
 		if (request.method !== "POST") {
-			return new Response("Boss bot de Idle Clans. Nada que ver por aquí.", {
+			return new Response(T.WORKER_HEALTHCHECK, {
 				status: 200,
 			});
 		}
@@ -810,9 +776,7 @@ export default {
 			return await handleInteraction(JSON.parse(body), env, ctx);
 		} catch (err) {
 			console.error(err);
-			return reply(
-				`Algo ha petado. Avisa a quien administra el bot.\n\`\`\`${String(err?.message ?? err).slice(0, 300)}\`\`\``,
-			);
+			return reply(T.algoHaPetadoTexto(String(err?.message ?? err).slice(0, 300)));
 		}
 	},
 
@@ -846,7 +810,7 @@ export default {
 						// conviene dejar rastro) y se borra el original, igual que
 						// al completar un grupo a mano.
 						await sendMessage(env.DISCORD_TOKEN, g.channel_id, {
-							content: `⌛ Grupo #${g.id} (${BOSSES[g.boss]?.label ?? g.boss}) llevaba más de ${horas}h cerrado sin completarse: dado por hecho automáticamente.`,
+							content: T.grupoAmebaTexto(g.id, BOSSES[g.boss]?.label ?? g.boss, horas),
 						});
 						await deleteMessage(env.DISCORD_TOKEN, g.channel_id, g.message_id);
 					})(),
@@ -877,7 +841,7 @@ export default {
 				.join(" y ");
 			ctx.waitUntil(
 				sendMessage(env.DISCORD_TOKEN, announceChannelId, {
-					content: `🔄 Reset de ${nombres}: a apuntarse otra vez con el botón "Me faltan jefes".`,
+					content: T.resetAutomaticoTexto(nombres),
 				}),
 			);
 		}
