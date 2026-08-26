@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { makeD1 } from "./d1-shim.js";
 import * as db from "../src/db.js";
 import { STALE_CLOSED_WEEKLY_HOURS } from "../src/config.js";
-import worker, { matchAndAnnounce, publicarPanel } from "../src/index.js";
+import worker, { matchAndAnnounce, publicarPanel, verMiSituacion } from "../src/index.js";
 
 const G = "guild-1";
 const enviados = [];
@@ -77,10 +77,26 @@ console.log("✓ una baja reabre el grupo y entra quien esperaba");
 /* --- 5. Grupo lleno heredado de una versión anterior --- */
 
 await DB.prepare("UPDATE groups SET closed=0 WHERE id=?").bind(grupos[0].id).run();
+
+// Un registro NO relacionado con este jefe ya no revisa este grupo (es la
+// mejora de rendimiento de esta misma tanda): con la etiqueta "abierto" mal
+// puesta, nadie puede colarse de más igualmente, porque pickForGroup mira
+// el tamaño real del grupo, no la columna `closed`.
+await db.upsertReg(DB, G, "daily", { userId: "Ruido", boss: "hades", need: 1, keys: 1 });
 await matchAndAnnounce(env, G);
 g4 = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(grupos[0].id).first();
-assert.equal(g4.closed, 1, "un grupo ya lleno se cierra aunque no entre nadie nuevo");
-console.log("✓ se cierra un grupo lleno que estaba marcado como abierto");
+assert.equal(g4.closed, 0, "un registro de OTRO jefe ya no repara este grupo (antes sí, y salía caro)");
+const sinColarse = (await DB.prepare("SELECT COUNT(*) AS n FROM regs WHERE group_id=?").bind(grupos[0].id).first()).n;
+assert.equal(sinColarse, 3, "pero tampoco puede entrar nadie de más aunque la etiqueta esté mal");
+
+// Limpieza: este registro de sondeo no debe filtrarse a los tests siguientes.
+await db.removeReg(DB, G, "daily", "Ruido", "hades");
+
+// El barrido periódico (el cron, cada 10 min) sí lo deja al día.
+await db.syncAllGroups(DB, G, 3);
+g4 = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(grupos[0].id).first();
+assert.equal(g4.closed, 1, "el barrido del cron sí lo corrige, aunque tarde hasta 10 minutos");
+console.log("✓ un grupo lleno con la etiqueta mal puesta no admite a nadie de más, y el cron lo corrige");
 
 /* --- 6. Cierre manual: no se reabre al llenarse ni al salir alguien --- */
 
@@ -250,15 +266,22 @@ for (const u of ["C1", "C2", "C3"]) {
 }
 console.log("✓ aviso de grupo completo mencionando a los tres");
 
-// También cuando el cierre lo hace el barrido (grupo heredado, sin altas nuevas)
+// Si el grupo se queda con la etiqueta desincronizada (dato viejo, sin
+// relación con ningún registro nuevo), el barrido periódico del cron lo
+// corrige, pero en SILENCIO: avisar a estas alturas ya no tiene sentido
+// (nadie ha hecho nada, y es la misma mejora de rendimiento de más arriba:
+// ya no se revisa cada grupo abierto en cada registro sin relación).
 await DB.prepare("UPDATE groups SET closed=0 WHERE boss='devil'").run();
 antesAviso = enviados.length;
-await matchAndAnnounce(env, G);
-assert.ok(
-  enviados.slice(antesAviso).some((e) => (e.body.content ?? "").includes("completo")),
-  "un grupo cerrado por el barrido también se avisa",
+await db.syncAllGroups(DB, G, 3);
+const gDevilTrasBarrido = await DB.prepare("SELECT * FROM groups WHERE boss='devil'").first();
+assert.equal(gDevilTrasBarrido.closed, 1, "el cron sí corrige la etiqueta");
+assert.equal(
+  enviados.slice(antesAviso).length,
+  0,
+  "pero no avisa: el barrido periódico es silencioso a propósito",
 );
-console.log("✓ también avisa si el grupo se cierra por el barrido");
+console.log("✓ el barrido del cron corrige la etiqueta sin avisar (nadie hizo nada)");
 
 // Y no repite el aviso en la siguiente pasada
 antesAviso = enviados.length;
@@ -534,5 +557,114 @@ assert.ok(
   "el semanal, con su ventana real de casi una semana, sigue a salvo a las 30h",
 );
 console.log("✓ el barrido de grupos ameba respeta ventanas distintas por ámbito");
+
+/* --- 23. /grupo no escala con el número de grupos (el bug de "no responde") --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+// K está metida en 8 grupos distintos, cada uno con otra persona.
+const ochoJefes = ["zeus", "medusa", "hades", "griffin", "devil", "chimera", "sobek", "kronos"];
+for (const boss of ochoJefes) {
+  await db.upsertReg(DB, G, "daily", { userId: "K", boss, need: 1, keys: 1 });
+  await db.upsertReg(DB, G, "daily", { userId: `C_${boss}`, boss, need: 1, keys: 1 });
+}
+await matchAndAnnounce(env, G);
+
+const gruposDeK = (await DB.prepare("SELECT COUNT(*) AS n FROM regs WHERE user_id='K' AND group_id IS NOT NULL").first()).n;
+assert.equal(gruposDeK, 8, "K está en los 8 grupos de verdad, para que el test tenga sentido");
+
+DB._resetStats();
+const { embed } = await verMiSituacion(env, G, "K");
+const consultasCon8 = DB._stats.prepareCalls;
+assert.equal(embed.fields.length, 8, "/grupo muestra los 8 grupos");
+
+// Referencia: con solo 1 grupo, ¿cuántas consultas hacen falta?
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+await db.upsertReg(DB, G, "daily", { userId: "K", boss: "mesines", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "C1", boss: "mesines", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+
+DB._resetStats();
+await verMiSituacion(env, G, "K");
+const consultasCon1 = DB._stats.prepareCalls;
+
+// Con el fallo antiguo (una consulta por grupo + barrido completo), pasar de
+// 1 a 8 grupos multiplicaba las consultas casi por 8. Con el arreglo, el
+// coste se mantiene prácticamente plano: 2 consultas más da igual tener 1
+// grupo que 8, porque getGroupsBatch trae todos de una vez.
+assert.ok(
+  consultasCon8 - consultasCon1 < 5,
+  `con 8 grupos no debería hacer muchas más consultas que con 1 (con1=${consultasCon1}, con8=${consultasCon8})`,
+);
+console.log(`✓ /grupo no escala con el número de grupos (${consultasCon1} consultas con 1, ${consultasCon8} con 8)`);
+
+/* --- 24. Registrarse no barre todo el servidor en cada alta --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+// Un servidor con mucha actividad previa: 15 grupos de jefes sin relación
+// (reutilizando los 9 jefes reales varias veces, en ámbitos distintos, para
+// tener 15 grupos separados sin depender de nombres de jefe inventados).
+const jefesReales = ["zeus", "medusa", "hades", "griffin", "devil", "chimera", "sobek", "kronos", "mesines"];
+for (let n = 1; n <= 15; n++) {
+  const boss = jefesReales[n % jefesReales.length];
+  const scope = n % 2 === 0 ? "daily" : "weekly";
+  await db.upsertReg(DB, G, scope, { userId: `X${n}a`, boss, need: n, keys: 1 });
+  await db.upsertReg(DB, G, scope, { userId: `X${n}b`, boss, need: n, keys: 1 });
+}
+await matchAndAnnounce(env, G);
+
+// Ahora se registra una persona nueva para un jefe que no tiene nada que ver.
+await db.upsertReg(DB, G, "daily", { userId: "Nuevo1", boss: "zeus", need: 1, keys: 1 });
+DB._resetStats();
+await db.upsertReg(DB, G, "daily", { userId: "Nuevo2", boss: "zeus", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+const consultasConRuido = DB._stats.prepareCalls;
+
+// El mismo registro, pero en un servidor limpio sin los 15 grupos de ruido.
+const DBsinRuido = makeD1(fs.readFileSync("schema.sql", "utf8"));
+const envSinRuido = { DB: DBsinRuido, DISCORD_TOKEN: "fake" };
+await db.ensureGuild(DBsinRuido, G);
+await db.setConfig(DBsinRuido, G, { announceChannelId: "canal-1" });
+await db.upsertReg(DBsinRuido, G, "daily", { userId: "Nuevo1", boss: "zeus", need: 1, keys: 1 });
+DBsinRuido._resetStats();
+await db.upsertReg(DBsinRuido, G, "daily", { userId: "Nuevo2", boss: "zeus", need: 1, keys: 1 });
+await matchAndAnnounce(envSinRuido, G);
+const consultasSinRuido = DBsinRuido._stats.prepareCalls;
+
+// Si esto fallara, sería porque ha vuelto el barrido completo del servidor
+// en cada registro: con 15 grupos de ruido de por medio, el coste debería
+// ser prácticamente el mismo que en un servidor limpio.
+assert.ok(
+  consultasConRuido - consultasSinRuido < 5,
+  `registrar no debería costar más por tener 15 grupos sin relación (limpio=${consultasSinRuido}, con ruido=${consultasConRuido})`,
+);
+console.log(
+  `✓ registrarse no barre todo el servidor (${consultasSinRuido} consultas en limpio, ${consultasConRuido} con 15 grupos de ruido)`,
+);
+
+/* --- 25. Desglose por persona en /grupo: kills, llaves y quién abre --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+await db.upsertReg(DB, G, "daily", { userId: "Warpoppins", boss: "chimera", need: 5, keys: 2 });
+await db.upsertReg(DB, G, "daily", { userId: "Kaysera", boss: "chimera", need: 4, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "Carnizella", boss: "chimera", need: 2, keys: 3 });
+await matchAndAnnounce(env, G);
+
+const { embed: embedDesglose } = await verMiSituacion(env, G, "Warpoppins");
+const textoDesglose = embedDesglose.fields[0].value;
+
+assert.ok(textoDesglose.includes("<@Warpoppins>: 5 kills · 🔑 2"), "kills y llaves de Warpoppins");
+assert.ok(textoDesglose.includes("<@Kaysera>: 4 kills · 🔑 1"), "kills y llaves de Kaysera");
+assert.ok(textoDesglose.includes("<@Carnizella>: 2 kills · 🔑 3"), "kills y llaves de Carnizella");
+assert.ok(textoDesglose.includes("Runs del grupo: **5**"), "las runs son las del que más necesita (5)");
+// Con 5 runs y Carnizella(3)+Warpoppins(2)=5 llaves exactas, abre quien más tiene primero.
+assert.ok(textoDesglose.includes("<@Carnizella> ×3") && textoDesglose.includes("<@Warpoppins> ×2"), "quién abre cuánto");
+console.log("✓ /grupo muestra el desglose de kills, llaves y quién abre por persona");
 
 console.log("\nTodo OK");

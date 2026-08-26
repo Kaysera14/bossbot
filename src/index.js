@@ -53,12 +53,18 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 
 	// Foto de qué grupos estaban abiertos antes de tocar nada: al final se
 	// comparan los estados para avisar de TODOS los que se hayan completado,
-	// se hayan llenado por el barrido, por una alta o por un cierre manual.
+	// se hayan llenado por una alta o por un cierre manual.
 	const abiertosAntes = await db.openGroupIds(env.DB, guildId);
 
-	// Barrido de seguridad en 4 consultas: pone al día runs, llaves y estado de
-	// todos los grupos, incluidos los cerrados y los heredados de otra versión.
-	await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
+	// OJO: aquí NO se barre todo el servidor con syncAllGroups. Cada escritura
+	// (crear grupo, ampliar, cerrar, salir) ya deja su propio grupo al día con
+	// resyncGroup/updateGroup, así que no hace falta revisar TODOS los grupos
+	// del servidor en cada registro. Con un servidor activo (muchos grupos a
+	// la vez), ese barrido en cada alta era lo bastante caro como para que
+	// Discord diera timeout antes de que el bot llegara a responder. El
+	// barrido completo se sigue haciendo, pero solo donde de verdad hace
+	// falta: en el cron (cada 10 min, para todos los servidores) y en
+	// /emparejar (cuando un admin lo pide explícitamente).
 
 	// Diario y semanal van a la misma bolsa solo si MATCH_ACROSS_SCOPES está
 	// activado. Por defecto van separados: cada ámbito con sus propios grupos
@@ -70,8 +76,20 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 			? await db.unassignedRegs(env.DB, guildId, scope)
 			: await db.unassignedAll(env.DB, guildId);
 
+		// Solo tiene sentido tocar grupos abiertos de jefes que de verdad
+		// tienen a alguien esperando en esta bolsa. Antes se revisaba TODO
+		// grupo abierto del ámbito (aunque fuera de un jefe sin relación),
+		// lo que hacía que un servidor con mucha actividad pagara ese coste
+		// en CADA registro, sin importar el jefe. Lo que caía fuera de este
+		// filtro (grupos que llevaban tiempo atascados) lo sigue cazando el
+		// barrido periódico del cron cada 10 minutos.
+		const bossesEnPool = new Set(pool.map((r) => r.boss));
+		const gruposAbiertos = (await db.openGroups(env.DB, guildId, scope)).filter(({ group }) =>
+			bossesEnPool.has(group.boss),
+		);
+
 		// 1) Primero se rellenan los grupos que siguen abiertos EN ESE ÁMBITO.
-		for (const { group, regs } of await db.openGroups(env.DB, guildId, scope)) {
+		for (const { group, regs } of gruposAbiertos) {
 			const elegidos = pickForGroup(
 				regs,
 				pool.filter((r) => r.boss === group.boss),
@@ -287,26 +305,26 @@ async function salirDeTodo(env, guildId, uid, ctx) {
 
 /* ---------- estado ---------- */
 
-async function verMiSituacion(env, guildId, uid) {
+export async function verMiSituacion(env, guildId, uid) {
 	const regs = await db.userRegs(env.DB, guildId, uid);
-	const grupos = [];
 	const cola = [];
-	const vistos = new Set();
+	const idsGrupo = new Set();
 
-	// Se recalcula todo antes de enseñarlo: así nunca se muestra un estado viejo.
-	await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
-
+	// Sin barrido completo del servidor aquí: cada escritura (registrarse,
+	// salir, cerrar...) ya deja su grupo al día por su cuenta con
+	// resyncGroup/updateGroup. Barrer TODOS los grupos del servidor solo para
+	// enseñar los tuyos era caro y, con mucha gente activa, hacía que Discord
+	// diera timeout antes de que el bot llegara a responder.
 	for (const r of regs) {
-		if (r.groupId) {
-			// El mismo grupo puede llegar por dos registros (diario y semanal).
-			if (vistos.has(r.groupId)) continue;
-			vistos.add(r.groupId);
-			const g = await db.getGroup(env.DB, guildId, r.groupId);
-			if (g) grupos.push(g);
-		} else {
-			cola.push(r);
-		}
+		if (r.groupId) idsGrupo.add(r.groupId);
+		else cola.push(r);
 	}
+
+	// Una sola tanda de consultas para TODOS tus grupos, en vez de una por
+	// grupo (el mismo motivo: con 6-8 grupos, N consultas secuenciales a D1
+	// se comían el margen de 3 segundos de Discord).
+	const grupos = await db.getGroupsBatch(env.DB, guildId, [...idsGrupo]);
+
 	const { announceChannelId } = await db.getConfig(env.DB, guildId);
 	return {
 		embed: statusEmbed(uid, grupos, cola, !announceChannelId),
@@ -447,6 +465,12 @@ async function resumenCola(env, guildId) {
 async function cmdEmparejar(i, env, ctx) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
 	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
+
+	// Esto sí es el sitio correcto para un barrido a fondo: es una acción de
+	// admin, poco frecuente, donde interesa más la exactitud que la
+	// velocidad (a diferencia de un simple registro, que va por el camino
+	// rápido sin barrer todo el servidor).
+	await db.syncAllGroups(env.DB, i.guild_id, GROUP_SIZE);
 
 	const creados = await matchAndAnnounce(env, i.guild_id, ctx);
 	const cola = await resumenCola(env, i.guild_id);
@@ -782,6 +806,16 @@ export default {
 
 	async scheduled(event, env, ctx) {
 		await db.ensureSchema(env.DB);
+
+		// Barrido de exactitud, cada 10 minutos, para todos los servidores.
+		// Antes esto se hacía en CADA registro (dentro de matchAndAnnounce),
+		// lo cual era caro con un servidor activo: con muchos grupos ya
+		// creados, revisar TODOS en cada alta hacía que Discord diera
+		// timeout antes de que el bot llegara a responder. Aquí, en el cron,
+		// el coste no importa porque nadie está esperando una respuesta.
+		for (const guildId of await db.allGuildIds(env.DB)) {
+			await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);
+		}
 
 		// Red de seguridad: grupos por debajo del mínimo que se hayan quedado
 		// sueltos por cualquier motivo (datos antiguos, un camino no cubierto).

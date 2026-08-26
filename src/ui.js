@@ -147,10 +147,9 @@ export function statusEmbed(uid, grupos, cola, sinCanal = false) {
 
 	for (const { group, regs: regsBruto } of grupos) {
 		const regs = dedupePool(regsBruto);
-		const b = BOSSES[group.boss];
 		const { runs, deficit } = groupStats(regs);
 		const yo = regs.find((r) => r.userId === uid);
-		const mio = keyPlan(regs, runs).find((p) => p.userId === uid);
+		const plan = keyPlan(regs, runs);
 		const faltan = GROUP_SIZE - regs.length;
 
 		fields.push({
@@ -162,14 +161,11 @@ export function statusEmbed(uid, grupos, cola, sinCanal = false) {
 				T.estadoStatus(group.closed, faltan),
 			),
 			value: [
-				T.companerosTexto(
-					regs
-						.filter((r) => r.userId !== uid)
-						.map((r) => `<@${r.userId}>`)
-						.join(", "),
-				),
+				...regs.map((r) => T.lineaMiembroStatus(r.userId, r)),
 				T.runsDelGrupoTexto(runs, yo?.need ?? 0),
-				mio ? T.abrePuertasTexto(mio.use, group.boss) : T.NO_ABRES_INVITADO,
+				plan.length
+					? T.abrePuertasResumen(plan.map((p) => T.lineaAbrePuertas(p.userId, p.use)).join(", "))
+					: T.NADIE_TIENE_LLAVES,
 				deficit ? T.faltanLlavesEnGrupo(deficit) : null,
 			]
 				.filter(Boolean)

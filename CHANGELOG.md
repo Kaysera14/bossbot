@@ -12,6 +12,35 @@ _(aquí se irán añadiendo las entradas de lo que pidas a partir de ahora)_
 
 ---
 
+## 2026-08-26 — Arreglado el timeout con muchos grupos + desglose por persona en /grupo
+
+### Corregido
+
+- Bug de rendimiento real: registrarse en un jefe barría TODOS los grupos
+  abiertos del servidor, sin importar si tenían relación con ese jefe.
+  Con un servidor activo, esto podía superar los 3 segundos que da Discord
+  antes de marcar "la aplicación no responde" — aunque el registro se
+  completaba igualmente en segundo plano, sin avisar. Medido: pasaba de 15
+  a 62 consultas con 15 grupos de ruido en el servidor.
+- "Mi grupo" hacía una consulta a la base de datos por cada grupo del que
+  formabas parte. Con 8 grupos, 8 idas y vueltas secuenciales. Ahora es una
+  sola tanda (`getGroupsBatch`), plana sin importar cuántos grupos tengas.
+- El barrido completo del servidor se ha movido del camino de cada registro
+  a donde de verdad hace falta: el cron cada 10 minutos y `/emparejar`
+  (acción de admin explícita). Efecto secundario aceptado: un grupo con la
+  etiqueta mal puesta por datos viejos puede tardar hasta 10 min en
+  corregirse en vez de al instante, pero nadie puede colarse de más
+  mientras tanto (el límite se respeta por cantidad real de gente).
+
+### Añadido
+
+- `/grupo` muestra ahora, por cada grupo, el desglose completo de cada
+  miembro: kills que necesita y llaves que aporta, seguido de quién abre
+  cuántas puertas. Antes solo se veía el total del grupo y tu propia tarea.
+- Tests de rendimiento que miden consultas reales a la base de datos (no
+  solo corrección funcional), para que este tipo de regresión no pueda
+  volar bajo el radar otra vez.
+
 ## 2026-08-13 — Todos los textos del bot centralizados en un solo archivo
 
 ### Añadido

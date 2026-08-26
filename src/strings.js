@@ -123,6 +123,8 @@ export const tituloGrupoStatus = (boss, ambitoLabel, groupId, n, estado) =>
 	`${BOSSES[boss].emoji} ${BOSSES[boss].label} · ${ambitoLabel} · Grupo #${groupId} (${n}/${GROUP_SIZE}) ${estado}`;
 
 export const companerosTexto = (lista) => `Compañeros: ${lista || "—"}`;
+export const lineaMiembroStatus = (userId, r) =>
+	`• <@${userId}>: ${r.support ? "apoyo" : `${r.need} ${plural(r.need, "kill")}`} · 🔑 ${r.keys}`;
 export const runsDelGrupoTexto = (runs, need) => `Runs del grupo: **${runs}** (tú necesitas ${need})`;
 export const abrePuertasTexto = (use, boss) => `🔑 Te toca abrir **${use}** puerta(s) con ${BOSSES[boss].key}`;
 export const NO_ABRES_INVITADO = "🔑 Tú no abres: entras invitado";

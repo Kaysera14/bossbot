@@ -29,9 +29,22 @@ class Stmt {
 export function makeD1(schemaSql) {
   const db = new DatabaseSync(":memory:");
   db.exec(schemaSql);
+  const stats = { prepareCalls: 0, batchCalls: 0 };
   return {
-    prepare: (sql) => new Stmt(db, sql),
-    batch: async (stmts) => Promise.all(stmts.map((s) => s.run())),
+    prepare: (sql) => {
+      stats.prepareCalls++;
+      return new Stmt(db, sql);
+    },
+    batch: async (stmts) => {
+      stats.batchCalls++;
+      return Promise.all(stmts.map((s) => s.run()));
+    },
     _raw: db,
+    /** Cuenta round-trips desde la última llamada, para tests de rendimiento. */
+    _stats: stats,
+    _resetStats: () => {
+      stats.prepareCalls = 0;
+      stats.batchCalls = 0;
+    },
   };
 }

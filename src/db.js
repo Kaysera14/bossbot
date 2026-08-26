@@ -387,6 +387,41 @@ export async function staleClosedGroups(db, maxAgeMs, scope = "daily") {
 }
 
 /** Grupos abiertos de un jefe, con su gente, para poder ampliarlos. */
+/**
+ * Trae varios grupos de golpe (con sus miembros), en 2 consultas en vez de
+ * N. Se usa en /grupo, que puede tener que enseñar muchos grupos a la vez:
+ * antes hacía una consulta por grupo, y con gente en 6-8 grupos eso eran
+ * suficientes idas y vueltas a D1 como para que Discord diera timeout.
+ */
+export async function getGroupsBatch(db, guildId, groupIds) {
+  if (!groupIds.length) return [];
+
+  const marcas = groupIds.map(() => "?").join(",");
+  const { results: grupos } = await db
+    .prepare(`SELECT * FROM groups WHERE guild_id=? AND id IN (${marcas})`)
+    .bind(guildId, ...groupIds)
+    .all();
+  if (!grupos.length) return [];
+
+  const { results: todos } = await db
+    .prepare(`SELECT * FROM regs WHERE guild_id=? AND group_id IN (${marcas})`)
+    .bind(guildId, ...groupIds)
+    .all();
+
+  const porGrupo = new Map();
+  for (const r of todos) {
+    if (!porGrupo.has(r.group_id)) porGrupo.set(r.group_id, []);
+    porGrupo.get(r.group_id).push(row2reg(r));
+  }
+  return grupos.map((g) => ({ group: g, regs: porGrupo.get(g.id) ?? [] }));
+}
+
+/** IDs de todos los servidores que conoce el bot, para los barridos del cron. */
+export async function allGuildIds(db) {
+  const { results } = await db.prepare(`SELECT guild_id FROM guilds`).all();
+  return results.map((r) => r.guild_id);
+}
+
 export async function openGroups(db, guildId, scope = null) {
   const filtroScope = scope ? `AND scope=?` : "";
   const bindScope = scope ? [scope] : [];
