@@ -566,6 +566,44 @@ async function onAdminButton(i, env) {
 	});
 }
 
+/**
+ * Saca a alguien de un grupo concreto. Solo admin (rol configurado o
+ * Gestionar servidor, comprobado en código — no en Discord, para no
+ * repetir el fallo de /panel de hace tiempo, donde default_member_permissions
+ * ocultaba el comando a quien tenía el rol admin pero no el permiso nativo).
+ */
+async function cmdExpulsar(i, env, ctx) {
+	const cfg = await db.getConfig(env.DB, i.guild_id);
+	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
+
+	const o = opts(i);
+	const groupId = o.grupo;
+	const objetivo = o.usuario;
+
+	const g = await db.getGroup(env.DB, i.guild_id, groupId);
+	if (!g) return reply(T.expulsarGrupoNoExiste(groupId));
+
+	const borrados = await db.removeUserFromGroup(env.DB, i.guild_id, groupId, objetivo);
+	if (!borrados.length) return reply(T.expulsarNoEstabaEnGrupo(objetivo, groupId));
+
+	ctx.waitUntil(
+		(async () => {
+			await db.resyncGroup(env.DB, i.guild_id, groupId, GROUP_SIZE);
+			await refreshGroupMessage(env, i.guild_id, groupId);
+			await limpiarYRecolocar(env, i.guild_id);
+
+			if (cfg.announceChannelId) {
+				await sendMessage(env.DISCORD_TOKEN, cfg.announceChannelId, {
+					content: T.expulsarAvisoCanal(objetivo, groupId),
+					allowed_mentions: { users: [objetivo] },
+				});
+			}
+		})(),
+	);
+
+	return reply(T.expulsarConfirmacion(objetivo, groupId));
+}
+
 async function cmdReset(i, env) {
 	const cfg = await db.getConfig(env.DB, i.guild_id);
 	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
@@ -746,6 +784,7 @@ const COMANDOS = {
 	fuera: cmdFuera,
 	quitar: cmdQuitar,
 	borrargrupos: cmdBorrarGrupos,
+	expulsar: cmdExpulsar,
 	panel: cmdPanel,
 	configurar: cmdConfigurar,
 	emparejar: cmdEmparejar,

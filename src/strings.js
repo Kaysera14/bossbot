@@ -275,6 +275,14 @@ export const deshechosResumenTexto = (n) =>
 
 export const resetHechoTexto = (ambitoLabel) => `Reset manual de ${ambitoLabel.toLowerCase()}s hecho.`;
 
+export const expulsarGrupoNoExiste = (groupId) => `El grupo #${groupId} no existe.`;
+export const expulsarNoEstabaEnGrupo = (userId, groupId) =>
+	`<@${userId}> no estaba en el grupo #${groupId}.`;
+export const expulsarConfirmacion = (userId, groupId) =>
+	`Hecho: <@${userId}> fuera del grupo #${groupId}. El hueco vuelve a estar libre.`;
+export const expulsarAvisoCanal = (userId, groupId) =>
+	`🚷 <@${userId}> ha sido sacado del grupo #${groupId} por un admin. El hueco vuelve a estar libre.`;
+
 // ---------------------------------------------------------------------------
 // Cron: reset automático y limpieza de grupos "ameba".
 // ---------------------------------------------------------------------------

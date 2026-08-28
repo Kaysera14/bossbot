@@ -155,6 +155,7 @@ Los mismos, por si alguien prefiere teclear:
 | `/emparejar` | *(Admin)* Fuerza la formación de grupos |
 | `/borrargrupos` | *(Admin)* Deshace todos los grupos; la gente vuelve a la cola |
 | `/reset ambito` | *(Admin)* Borra registros y grupos a mano |
+| `/expulsar usuario grupo` | *(Admin)* Saca a alguien de un grupo concreto; el hueco se libera y se rellena solo |
 
 ## El panel se mantiene solo
 

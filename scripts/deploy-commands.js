@@ -22,6 +22,7 @@ if (!DISCORD_TOKEN || !DISCORD_APP_ID) {
 
 const STRING = 3,
 	INTEGER = 4,
+	USER = 6,
 	CHANNEL = 7,
 	ROLE = 8;
 const MANAGE_GUILD = String(1 << 5);
@@ -102,6 +103,25 @@ const commands = [
 	{
 		name: "borrargrupos",
 		description: "[Admin] Deshace todos los grupos; la gente vuelve a la cola",
+	},
+	{
+		name: "expulsar",
+		description: "[Admin] Saca a alguien de un grupo concreto (el hueco se libera)",
+		options: [
+			{
+				name: "usuario",
+				description: "A quién sacar",
+				type: USER,
+				required: true,
+			},
+			{
+				name: "grupo",
+				description: "Número del grupo (el # que sale en /grupo o /emparejar)",
+				type: INTEGER,
+				required: true,
+				min_value: 1,
+			},
+		],
 	},
 	{
 		name: "panel",

@@ -667,4 +667,49 @@ assert.ok(textoDesglose.includes("Runs del grupo: **5**"), "las runs son las del
 assert.ok(textoDesglose.includes("<@Carnizella> ×3") && textoDesglose.includes("<@Warpoppins> ×2"), "quién abre cuánto");
 console.log("✓ /grupo muestra el desglose de kills, llaves y quién abre por persona");
 
+/* --- 26. /expulsar: sacar a alguien de un grupo concreto --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+// Un grupo cerrado de Sobek, donde Fantasma ya no da señales de vida.
+await db.upsertReg(DB, G, "daily", { userId: "Fantasma", boss: "sobek", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "E1", boss: "sobek", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "E2", boss: "sobek", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+
+const gExpulsar = await DB.prepare("SELECT * FROM groups WHERE boss='sobek'").first();
+assert.equal(gExpulsar.closed, 1, "el grupo empieza lleno y cerrado");
+
+// Fantasma tiene ADEMÁS un registro suelto de otro jefe: no debe tocarse.
+await db.upsertReg(DB, G, "weekly", { userId: "Fantasma", boss: "kronos", need: 3, keys: 1 });
+
+const borrado = await db.removeUserFromGroup(DB, G, gExpulsar.id, "Fantasma");
+assert.equal(borrado.length, 1, "se borra exactamente 1 fila: la de ESE grupo");
+
+const siguePendiente = await DB.prepare(
+  "SELECT * FROM regs WHERE user_id='Fantasma' AND boss='kronos'",
+).first();
+assert.ok(siguePendiente, "su registro de Cronos, sin relación, no se toca");
+
+await db.resyncGroup(DB, G, gExpulsar.id, 3);
+const gTrasExpulsar = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(gExpulsar.id).first();
+assert.equal(gTrasExpulsar.closed, 0, "el grupo se reabre solo al quedarse con 2");
+console.log("✓ /expulsar saca solo de ESE grupo, sin tocar otros registros de la persona");
+
+// Y si hay alguien esperando el mismo jefe, ocupa el hueco que ha quedado libre.
+await db.upsertReg(DB, G, "daily", { userId: "E3", boss: "sobek", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+const miembrosFinal = (
+  await DB.prepare("SELECT user_id FROM regs WHERE group_id=?").bind(gExpulsar.id).all()
+).results.map((r) => r.user_id);
+assert.deepEqual(miembrosFinal.sort(), ["E1", "E2", "E3"], "el hueco libre lo ocupa quien esperaba");
+assert.ok(!miembrosFinal.includes("Fantasma"), "Fantasma ya no está");
+console.log("✓ el hueco liberado por /expulsar se rellena con quien esperaba en cola");
+
+// Expulsar a alguien que no está en ese grupo: no hace nada.
+const nada = await db.removeUserFromGroup(DB, G, gExpulsar.id, "NoEstaAqui");
+assert.equal(nada.length, 0, "no borra nada si la persona no estaba en ese grupo");
+console.log("✓ expulsar a quien no está en el grupo no rompe nada");
+
 console.log("\nTodo OK");

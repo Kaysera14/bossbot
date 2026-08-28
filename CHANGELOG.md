@@ -12,6 +12,24 @@ _(aquí se irán añadiendo las entradas de lo que pidas a partir de ahora)_
 
 ---
 
+## 2026-08-27 — Comando /expulsar para admins
+
+### Añadido
+
+- `/expulsar usuario:@X grupo:N`: saca a alguien de un grupo concreto. Solo
+  para quien tenga el rol admin configurado o Gestionar servidor (comprobado
+  en código, sin `default_member_permissions`, para no repetir el fallo de
+  visibilidad que tuvo `/panel`). El hueco se libera y se rellena solo con
+  quien esperaba en cola para el mismo jefe.
+- `db.removeUserFromGroup`: saca a alguien de un grupo por su id exacto, sin
+  tocar otros registros suyos para el mismo jefe en un ámbito distinto
+  (a diferencia de `removeUserBoss`, que usa `/fuera` y sí los borra todos).
+
+### Notas de despliegue
+
+- Sin migración. Comando nuevo: hace falta `npm run commands` además del
+  deploy.
+
 ## 2026-08-26 — Arreglado el timeout con muchos grupos + desglose por persona en /grupo
 
 ### Corregido

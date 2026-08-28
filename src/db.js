@@ -473,6 +473,22 @@ export async function removeUserBoss(db, guildId, userId, boss) {
   return results;
 }
 
+/**
+ * Saca a una persona de UN grupo concreto por su id, no de todos sus
+ * registros de ese jefe. Es lo que usa /expulsar: un admin apunta al
+ * número de grupo, no adivina el ámbito ni se lleva por delante un
+ * registro de esa persona en otro grupo distinto para el mismo jefe.
+ */
+export async function removeUserFromGroup(db, guildId, groupId, userId) {
+  const { results } = await db
+    .prepare(
+      `DELETE FROM regs WHERE guild_id=? AND group_id=? AND user_id=? RETURNING scope, boss`
+    )
+    .bind(guildId, groupId, userId)
+    .all();
+  return results;
+}
+
 /** Actualiza runs/llaves y el estado de cierre. */
 export async function updateGroup(db, groupId, { runs, keys, closed, locked }) {
   const cerrando = closed ? 1 : 0;
