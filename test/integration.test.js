@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { makeD1 } from "./d1-shim.js";
 import * as db from "../src/db.js";
 import { STALE_CLOSED_WEEKLY_HOURS } from "../src/config.js";
-import worker, { matchAndAnnounce, publicarPanel, verMiSituacion } from "../src/index.js";
+import worker, { matchAndAnnounce, publicarPanel, verMiSituacion, registrar } from "../src/index.js";
 
 const G = "guild-1";
 const enviados = [];
@@ -711,5 +711,50 @@ console.log("✓ el hueco liberado por /expulsar se rellena con quien esperaba e
 const nada = await db.removeUserFromGroup(DB, G, gExpulsar.id, "NoEstaAqui");
 assert.equal(nada.length, 0, "no borra nada si la persona no estaba en ese grupo");
 console.log("✓ expulsar a quien no está en el grupo no rompe nada");
+
+/* --- 27. Volver a registrarte para un jefe ya agrupado no te sobrescribe en silencio --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+const ctxSiempre = { waitUntil: (p) => p };
+
+// Se abre un grupo de Diablo (daily) con Kaysera necesitando 3 kills.
+await registrar(env, G, "Kaysera", "daily", "devil", 3, 1, ctxSiempre);
+await registrar(env, G, "Otro1", "daily", "devil", 2, 1, ctxSiempre);
+const gDevil1 = await DB.prepare("SELECT * FROM groups WHERE boss='devil'").first();
+const regKaysera1 = await DB.prepare(
+  "SELECT * FROM regs WHERE user_id='Kaysera' AND boss='devil' AND scope='daily'",
+).first();
+assert.equal(regKaysera1.group_id, gDevil1.id, "Kaysera está en el grupo recién abierto");
+assert.equal(regKaysera1.need, 3, "con sus 3 kills originales");
+
+// Kaysera intenta apuntarse OTRA VEZ a Diablo (por ejemplo como apoyo,
+// pensando que entrará a un grupo distinto). El bot debe RECHAZARLO, no
+// convertir en silencio su fila dentro del grupo en el que ya estaba.
+const resultado = await registrar(env, G, "Kaysera", "daily", "devil", 0, 5, ctxSiempre);
+assert.ok(resultado.includes(`grupo #${gDevil1.id}`), "avisa de en qué grupo estaba ya");
+assert.ok(!resultado.includes("Apuntado como") && !resultado.includes("Registrado:"), "no dice que el registro se haya completado, porque no lo ha hecho");
+
+const regKaysera2 = await DB.prepare(
+  "SELECT * FROM regs WHERE user_id='Kaysera' AND boss='devil' AND scope='daily'",
+).first();
+assert.equal(regKaysera2.need, 3, "sus 3 kills originales NO se han sobrescrito a apoyo");
+assert.equal(regKaysera2.keys, 1, "sus llaves tampoco han cambiado");
+assert.equal(regKaysera2.group_id, gDevil1.id, "sigue en el mismo grupo de siempre");
+console.log("✓ re-registrarte en un jefe donde ya tienes grupo no te sobrescribe en silencio");
+
+// Si en cambio SIGUE en cola (sin grupo formado todavía), puede corregir
+// libremente sus propios datos las veces que quiera: eso nunca fue el bug.
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+await registrar(env, G, "Solo1", "daily", "zeus", 5, 1, ctxSiempre);
+await registrar(env, G, "Solo1", "daily", "zeus", 2, 3, ctxSiempre);
+const regSolo = await DB.prepare(
+  "SELECT * FROM regs WHERE user_id='Solo1' AND boss='zeus'",
+).first();
+assert.equal(regSolo.need, 2, "en cola, sí puede corregir sus propios datos");
+assert.equal(regSolo.group_id, null, "sigue en cola: no hay grupo que proteger todavía");
+console.log("✓ mientras sigues en cola, puedes corregir tus propios datos sin restricción");
 
 console.log("\nTodo OK");

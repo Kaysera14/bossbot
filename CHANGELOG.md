@@ -12,6 +12,26 @@ _(aquí se irán añadiendo las entradas de lo que pidas a partir de ahora)_
 
 ---
 
+## 2026-09-05 — Ya no se sobrescribe en silencio un registro que ya tiene grupo
+
+### Corregido
+
+- Bug real reportado: volver a registrarte para un jefe donde ya estabas
+  metido en un grupo formado sobrescribía tu fila en el sitio (cambiando
+  kills/llaves/apoyo) sin moverte de grupo ni añadirte a ningún otro, y sin
+  avisar de que eso era lo que iba a pasar. La causa: cada persona solo
+  puede tener un registro por (jefe, ámbito), y el registro previo ya tenía
+  un grupo asignado — al reescribirse en el sitio, nunca volvía a pasar por
+  el emparejador.
+- Ahora, si ya tienes grupo formado para ese jefe+ámbito, el bot bloquea el
+  nuevo registro y te dice en qué grupo estás, sin tocar nada, en vez de
+  sobrescribir en silencio. Mientras sigues en cola (sin grupo todavía),
+  puedes seguir corrigiendo tus propios datos sin restricción, como siempre.
+
+### Notas de despliegue
+
+- Sin migración, sin registrar comandos. Solo `npm test` + `npm run deploy`.
+
 ## 2026-08-27 — Comando /expulsar para admins
 
 ### Añadido

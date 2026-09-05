@@ -178,6 +178,10 @@ export const registradoNecesita = (boss, ambitoLabel, need, keys) =>
 
 export const AUN_NO_HAY_GENTE =
 	"⏳ Aún no hay suficiente gente. Se te avisará en cuanto se forme el grupo.";
+export const yaEstasEnGrupoTexto = (boss, ambitoLabel, groupId) =>
+	`Ya estás en el **grupo #${groupId}** para ${boss} (${ambitoLabel}). No se te ha cambiado nada. ` +
+	`Si quieres pasar a apoyo, cambiar tus kills/llaves o unirte a otro grupo, primero sal del #${groupId} ` +
+	`con el botón "Salir" en "Mi grupo" y luego vuelve a registrarte.`;
 export const AVISO_SIN_CANAL_COLA =
 	"\n⚠️ Ojo: no hay canal de avisos configurado, así que ese aviso no llegará. Que un admin use `/configurar canal:#canal`.";
 export const AVISO_SIN_CANAL_GRUPO =

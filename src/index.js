@@ -245,8 +245,20 @@ export async function limpiarYRecolocar(env, guildId) {
 
 /* ---------- registro (compartido por comando y panel) ---------- */
 
-async function registrar(env, guildId, uid, scope, boss, need, keys, ctx) {
+export async function registrar(env, guildId, uid, scope, boss, need, keys, ctx) {
 	const support = need === 0;
+
+	// Si ya estás en un grupo activo para este jefe+ámbito, NO se sobrescribe
+	// en silencio: antes sí lo hacía (upsertReg no toca group_id en el
+	// conflicto), lo que te podía convertir en "apoyo" dentro del MISMO
+	// grupo sin darte cuenta, y de paso dejarte sin entrar a otro grupo
+	// abierto distinto para el mismo jefe — tu fila ya tenía group_id, así
+	// que nunca volvía a pasar por el emparejador.
+	const previo = await db.getReg(env.DB, guildId, scope, uid, boss);
+	if (previo?.groupId) {
+		return T.yaEstasEnGrupoTexto(boss, SCOPES[scope].label, previo.groupId);
+	}
+
 	await db.upsertReg(env.DB, guildId, scope, {
 		userId: uid,
 		boss,
