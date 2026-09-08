@@ -152,10 +152,17 @@ export function statusEmbed(uid, grupos, cola, sinCanal = false) {
 		const plan = keyPlan(regs, runs);
 		const faltan = GROUP_SIZE - regs.length;
 
+		// El ámbito del TÍTULO viene del grupo, no de la fila de quien mira:
+		// antes usaba `yo?.scope`, y en un grupo "mixto" (dato viejo, de
+		// antes de separar diario/semanal del todo) cada persona veía una
+		// etiqueta distinta para el MISMO grupo, según cuál fuera su propio
+		// registro — justo el bug que reportaron Wondo y carnizella.
+		const ambitoGrupo = SCOPES[group.scope]?.label ?? T.AMBITO_MIXTO_LABEL;
+
 		fields.push({
 			name: T.tituloGrupoStatus(
 				group.boss,
-				SCOPES[yo?.scope]?.label ?? "",
+				ambitoGrupo,
 				group.id,
 				regs.length,
 				T.estadoStatus(group.closed, faltan),

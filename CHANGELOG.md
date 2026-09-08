@@ -12,6 +12,27 @@ _(aquí se irán añadiendo las entradas de lo que pidas a partir de ahora)_
 
 ---
 
+## 2026-09-08 — El título de un grupo en /grupo mentía según quién mirara
+
+### Corregido
+
+- Bug real reportado por Wondo y carnizella: en un grupo con gente de
+  ámbitos mezclados (dato heredado de antes de separar diario/semanal),
+  cada persona veía una etiqueta de ámbito distinta para el MISMO grupo en
+  `/grupo` — porque el título se calculaba a partir del registro de quien
+  miraba, no del grupo real. Ahora sale del ámbito real del grupo, igual
+  para todo el mundo; si el grupo está mezclado, se marca honestamente como
+  "Mixto ⚠️" en vez de mostrar cualquier cosa.
+- Cada línea de miembro en `/grupo` lleva ahora su propio icono de ámbito
+  (🌙/📅), igual que ya tenía el mensaje público del canal, para detectar
+  este tipo de caso a simple vista si vuelve a aparecer.
+
+### Notas de despliegue
+
+- Sin migración, sin registrar comandos. Solo `npm test` + `npm run deploy`.
+- Arreglo inmediato disponible sin desplegar: `/expulsar` tres veces sobre
+  el grupo #236 lo vacía y lo borra solo.
+
 ## 2026-09-05 — Ya no se sobrescribe en silencio un registro que ya tiene grupo
 
 ### Corregido

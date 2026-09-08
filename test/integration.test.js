@@ -659,9 +659,11 @@ await matchAndAnnounce(env, G);
 const { embed: embedDesglose } = await verMiSituacion(env, G, "Warpoppins");
 const textoDesglose = embedDesglose.fields[0].value;
 
-assert.ok(textoDesglose.includes("<@Warpoppins>: 5 kills · 🔑 2"), "kills y llaves de Warpoppins");
-assert.ok(textoDesglose.includes("<@Kaysera>: 4 kills · 🔑 1"), "kills y llaves de Kaysera");
-assert.ok(textoDesglose.includes("<@Carnizella>: 2 kills · 🔑 3"), "kills y llaves de Carnizella");
+assert.ok(textoDesglose.includes("<@Warpoppins>") && textoDesglose.includes("5 kill") && textoDesglose.includes("🔑 2"), "kills y llaves de Warpoppins");
+assert.ok(textoDesglose.includes("<@Kaysera>") && textoDesglose.includes("4 kill") && textoDesglose.includes("🔑 1"), "kills y llaves de Kaysera");
+assert.ok(textoDesglose.includes("<@Carnizella>") && textoDesglose.includes("2 kill") && textoDesglose.includes("🔑 3"), "kills y llaves de Carnizella");
+// Y ahora también lleva el icono del ámbito, para detectar grupos mixtos a simple vista.
+assert.ok(textoDesglose.includes("🌙"), "el icono de ámbito diario está en la línea de cada miembro");
 assert.ok(textoDesglose.includes("Runs del grupo: **5**"), "las runs son las del que más necesita (5)");
 // Con 5 runs y Carnizella(3)+Warpoppins(2)=5 llaves exactas, abre quien más tiene primero.
 assert.ok(textoDesglose.includes("<@Carnizella> ×3") && textoDesglose.includes("<@Warpoppins> ×2"), "quién abre cuánto");
@@ -756,5 +758,46 @@ const regSolo = await DB.prepare(
 assert.equal(regSolo.need, 2, "en cola, sí puede corregir sus propios datos");
 assert.equal(regSolo.group_id, null, "sigue en cola: no hay grupo que proteger todavía");
 console.log("✓ mientras sigues en cola, puedes corregir tus propios datos sin restricción");
+
+/* --- 28. Grupo "mixto" (dato viejo, diario+semanal juntos): mismo título para todos --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+// Reproduce EXACTAMENTE el caso real reportado: Wondo semanal, Japu y
+// carnizella diario, los tres en el mismo grupo "mixto" heredado.
+await db.upsertReg(DB, G, "weekly", { userId: "Wondo", boss: "medusa", need: 48, keys: 90 });
+await db.upsertReg(DB, G, "daily", { userId: "Japu", boss: "medusa", need: 0, keys: 13, support: true });
+await db.upsertReg(DB, G, "daily", { userId: "carnizella", boss: "medusa", need: 2, keys: 9 });
+
+const gMixto = await db.createGroup(
+  DB,
+  G,
+  [
+    { userId: "Wondo", scope: "weekly", boss: "medusa" },
+    { userId: "Japu", scope: "daily", boss: "medusa" },
+    { userId: "carnizella", scope: "daily", boss: "medusa" },
+  ],
+  { boss: "medusa", runs: 48, keys: 112 },
+);
+await db.updateGroup(DB, gMixto.id, { runs: 48, keys: 112, closed: true, locked: true });
+assert.equal((await DB.prepare("SELECT scope FROM groups WHERE id=?").bind(gMixto.id).first()).scope, "mixto");
+
+const { statusEmbed: statusEmbedFn } = await import("../src/ui.js");
+const vistaWondo = await verMiSituacion(env, G, "Wondo");
+const vistaCarni = await verMiSituacion(env, G, "carnizella");
+
+const tituloWondo = vistaWondo.embed.fields[0].name;
+const tituloCarni = vistaCarni.embed.fields[0].name;
+
+// Antes: cada uno veía un ámbito distinto para el MISMO grupo (el bug real).
+assert.equal(tituloWondo, tituloCarni, "las dos personas ven el MISMO título para el mismo grupo");
+assert.ok(tituloWondo.includes("Mixto"), "y se marca honestamente como mixto, no como diario ni semanal");
+
+// Y cada línea de miembro lleva su propio icono de ámbito, para detectarlo a simple vista.
+const valorCarni = vistaCarni.embed.fields[0].value;
+assert.ok(valorCarni.includes("<@Wondo> 📅"), "Wondo se ve marcado como semanal");
+assert.ok(valorCarni.includes("<@Japu> 🌙") && valorCarni.includes("<@carnizella> 🌙"), "Japu y carnizella como diario");
+console.log("✓ un grupo mixto muestra el MISMO título honesto a todo el mundo, con el ámbito real de cada uno");
 
 console.log("\nTodo OK");

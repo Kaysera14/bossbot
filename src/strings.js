@@ -119,12 +119,14 @@ export const botonQuitarCola = (boss, scope) =>
 export const estadoStatus = (closed, faltan) =>
 	closed ? "🔒 cerrado" : `🟢 abierto${faltan > 0 ? `, falta${plural(faltan, "", "n")} ${faltan}` : ""}`;
 
+export const AMBITO_MIXTO_LABEL = "Mixto ⚠️";
+
 export const tituloGrupoStatus = (boss, ambitoLabel, groupId, n, estado) =>
 	`${BOSSES[boss].emoji} ${BOSSES[boss].label} · ${ambitoLabel} · Grupo #${groupId} (${n}/${GROUP_SIZE}) ${estado}`;
 
 export const companerosTexto = (lista) => `Compañeros: ${lista || "—"}`;
 export const lineaMiembroStatus = (userId, r) =>
-	`• <@${userId}>: ${r.support ? "apoyo" : `${r.need} ${plural(r.need, "kill")}`} · 🔑 ${r.keys}`;
+	`• <@${userId}> ${(r.scopes ?? [r.scope]).map((sc) => SCOPES[sc]?.emoji ?? "").join("")} — ${r.support ? "apoyo" : `${r.need} ${plural(r.need, "kill")}`} · 🔑 ${r.keys}`;
 export const runsDelGrupoTexto = (runs, need) => `Runs del grupo: **${runs}** (tú necesitas ${need})`;
 export const abrePuertasTexto = (use, boss) => `🔑 Te toca abrir **${use}** puerta(s) con ${BOSSES[boss].key}`;
 export const NO_ABRES_INVITADO = "🔑 Tú no abres: entras invitado";
