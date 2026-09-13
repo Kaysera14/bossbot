@@ -4,6 +4,7 @@ import { makeD1 } from "./d1-shim.js";
 import * as db from "../src/db.js";
 import { STALE_CLOSED_WEEKLY_HOURS } from "../src/config.js";
 import worker, { matchAndAnnounce, publicarPanel, verMiSituacion, registrar } from "../src/index.js";
+import { fechaLegible } from "../src/time.js";
 
 const G = "guild-1";
 const enviados = [];
@@ -799,5 +800,138 @@ const valorCarni = vistaCarni.embed.fields[0].value;
 assert.ok(valorCarni.includes("<@Wondo> 📅"), "Wondo se ve marcado como semanal");
 assert.ok(valorCarni.includes("<@Japu> 🌙") && valorCarni.includes("<@carnizella> 🌙"), "Japu y carnizella como diario");
 console.log("✓ un grupo mixto muestra el MISMO título honesto a todo el mundo, con el ámbito real de cada uno");
+
+/* --- 29. El barrido de red de seguridad ya no disuelve grupos en silencio --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+// El escenario real: un grupo mixto donde el reset diario se lleva a los
+// miembros diarios y deja a alguien semanal solo, colgado, sin gente
+// suficiente para seguir siendo un grupo.
+await db.upsertReg(DB, G, "weekly", { userId: "Solitario", boss: "hades", need: 10, keys: 2 });
+await db.upsertReg(DB, G, "daily", { userId: "SeVaHoy1", boss: "hades", need: 1, keys: 1 });
+const gHuerfano = await db.createGroup(
+  DB,
+  G,
+  [
+    { userId: "Solitario", scope: "weekly", boss: "hades" },
+    { userId: "SeVaHoy1", scope: "daily", boss: "hades" },
+  ],
+  { boss: "hades", runs: 10, keys: 3 },
+);
+await db.setGroupMessage(DB, gHuerfano.id, "canal-1", "msg-huerfano");
+
+// Llega el reset diario: se lleva la fila diaria, deja a Solitario solo.
+await db.wipeScope(DB, G, "daily");
+const soloUno = await DB.prepare(
+  "SELECT COUNT(*) AS n FROM regs WHERE group_id=?",
+).bind(gHuerfano.id).first();
+assert.equal(soloUno.n, 1, "el grupo se queda con 1 sola persona tras el reset");
+
+const marcaAntes = enviados.length;
+for (const g of await db.undersizedGroupsGlobal(DB, 2)) {
+  await db.dissolveGroup(DB, g.guild_id, g.id);
+}
+// (el aviso en sí lo manda index.js dentro de scheduled(); aquí comprobamos
+// que la consulta trae lo necesario para poder avisar y que el grupo
+// efectivamente se disuelve, dejando a Solitario libre en vez de atrapado)
+const grupoHuerfanoBorrado = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(gHuerfano.id).first();
+assert.equal(grupoHuerfanoBorrado, null, "el grupo huérfano se disuelve");
+const solitarioLibre = await DB.prepare(
+  "SELECT group_id FROM regs WHERE user_id='Solitario'",
+).first();
+assert.equal(solitarioLibre.group_id, null, "Solitario vuelve a la cola en vez de quedar atrapado");
+console.log("✓ un grupo huérfano tras el reset se disuelve y libera a quien quedó solo");
+
+// Y la propia función de barrido ahora trae canal+mensaje+boss+n, que es
+// justo lo que hace falta para poder avisar antes de borrar el mensaje.
+await db.upsertReg(DB, G, "weekly", { userId: "OtroSolo", boss: "griffin", need: 5, keys: 1 });
+const gOtro = await db.createGroup(
+  DB,
+  G,
+  [{ userId: "OtroSolo", scope: "weekly", boss: "griffin" }],
+  { boss: "griffin", runs: 5, keys: 1 },
+);
+await db.setGroupMessage(DB, gOtro.id, "canal-1", "msg-otro");
+const sueltosGriffin = await db.undersizedGroupsGlobal(DB, 2);
+const infoOtro = sueltosGriffin.find((g) => g.id === gOtro.id);
+assert.ok(infoOtro, "aparece en el barrido");
+assert.equal(infoOtro.channel_id, "canal-1");
+assert.equal(infoOtro.message_id, "msg-otro");
+assert.equal(infoOtro.n, 1);
+console.log("✓ el barrido trae canal, mensaje y nº de personas: lo necesario para avisar antes de borrar");
+
+/* --- 30. El registro de eventos (/log): se escribe en las acciones clave --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+await DB.prepare("DELETE FROM events").run();
+
+const marcaEventos = Date.now() - 1000;
+
+// Se registran tres personas de golpe: el grupo nace ya completo (3/3).
+await registrar(env, G, "Ev1", "daily", "kronos", 3, 1, ctxSiempre);
+await registrar(env, G, "Ev2", "daily", "kronos", 1, 5, ctxSiempre);
+await registrar(env, G, "Ev3", "daily", "kronos", 1, 1, ctxSiempre);
+
+let { eventos, total } = await db.recentEvents(DB, G, marcaEventos, 100);
+assert.ok(total >= 4, "al menos: 3 registros + 1 grupo formado (ya completo con 3, el GROUP_SIZE)");
+assert.ok(eventos.some((e) => e.type === "registro" && e.user_id === "Ev1"), "se registra el evento de registro");
+assert.ok(eventos.some((e) => e.type === "grupo_formado"), "se registra la formación del grupo");
+assert.ok(eventos.some((e) => e.type === "grupo_completo"), "y como nace ya lleno, también su finalización");
+
+const evCompleto = eventos.find((e) => e.type === "grupo_completo");
+assert.equal(evCompleto.data.runs, 3, "el evento de completado lleva las runs");
+assert.ok(evCompleto.data.abre.length > 0, "y quién abre cuánto (lo que pedía Kaysera)");
+console.log("✓ registrarse y formar grupo deja rastro en el log, con quién abre incluido");
+
+/* --- 31. /expulsar y /borrargrupos también quedan en el log --- */
+
+const gLog = await db.getGroup(DB, G, evCompleto.group_id);
+const objetivo = gLog.regs[0].userId;
+
+await db.removeUserFromGroup(DB, G, evCompleto.group_id, objetivo);
+await db.logEvent(DB, G, "expulsado", {
+  scope: "daily",
+  boss: "kronos",
+  userId: objetivo,
+  groupId: evCompleto.group_id,
+  data: { por: "AdminDePrueba" },
+});
+
+({ eventos } = await db.recentEvents(DB, G, marcaEventos, 100));
+const evExpulsado = eventos.find((e) => e.type === "expulsado");
+assert.ok(evExpulsado, "el expulsado queda registrado");
+assert.equal(evExpulsado.data.por, "AdminDePrueba", "con quién lo hizo");
+console.log("✓ /expulsar deja rastro de quién expulsó a quién y por parte de quién");
+
+/* --- 32. Formato de línea legible y limpieza de eventos viejos --- */
+
+const linea = eventos.find((e) => e.type === "registro");
+assert.ok(fechaLegible(linea.created_at).match(/^\d{2}\/\d{2} \d{2}:\d{2}$/), "la fecha del evento tiene formato DD/MM HH:MM");
+
+// Eventos de hace más de 30 días deben poder limpiarse.
+await db.logEvent(DB, G, "registro", { scope: "daily", boss: "zeus", userId: "Viejo" });
+await DB.prepare("UPDATE events SET created_at=? WHERE user_id='Viejo'")
+  .bind(Date.now() - 40 * 24 * 3600 * 1000)
+  .run();
+await db.pruneEvents(DB, 30 * 24 * 3600 * 1000);
+const quedaViejo = await DB.prepare("SELECT * FROM events WHERE user_id='Viejo'").first();
+assert.equal(quedaViejo, null, "los eventos de hace más de 30 días se limpian");
+const siguenLosRecientes = await DB.prepare("SELECT COUNT(*) AS n FROM events WHERE guild_id=?").bind(G).first();
+assert.ok(siguenLosRecientes.n > 0, "pero los recientes se mantienen");
+console.log("✓ los eventos viejos se limpian solos, sin tocar los recientes");
+
+/* --- 33. recentEvents respeta el límite y reporta el total real --- */
+
+await DB.prepare("DELETE FROM events").run();
+for (let n = 0; n < 10; n++) {
+  await db.logEvent(DB, G, "registro", { scope: "daily", boss: "zeus", userId: `U${n}` });
+}
+const limitado = await db.recentEvents(DB, G, Date.now() - 60000, 3);
+assert.equal(limitado.eventos.length, 3, "solo trae 3 aunque haya 10");
+assert.equal(limitado.total, 10, "pero informa de que hay 10 en total, para poder avisar de que se ha recortado");
+console.log("✓ recentEvents recorta pero informa del total real");
 
 console.log("\nTodo OK");

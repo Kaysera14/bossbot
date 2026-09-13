@@ -119,6 +119,26 @@ export const editOriginal = (appId, interactionToken, payload) =>
     body: JSON.stringify(payload),
   });
 
+/**
+ * Envía el mensaje diferido de una interacción con un archivo adjunto.
+ * No usa el token del bot: el webhook de followup se autentica con el
+ * propio token de la interacción, igual que editOriginal.
+ * `FormData`/`Blob` son Web APIs disponibles en el runtime de Workers,
+ * así que no hace falta montar el multipart a mano.
+ */
+export async function sendFollowupFile(appId, interactionToken, filename, textContent, content) {
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify({ content }));
+  form.append("files[0]", new Blob([textContent], { type: "text/plain; charset=utf-8" }), filename);
+
+  const res = await fetch(`${API}/webhooks/${appId}/${interactionToken}`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) console.error("sendFollowupFile", res.status, await res.text());
+  return res.ok;
+}
+
 /* ---------- utilidades de opciones ---------- */
 
 export function opts(interaction) {

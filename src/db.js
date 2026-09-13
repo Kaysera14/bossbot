@@ -44,6 +44,16 @@ export async function ensureSchema(db) {
       group_id INTEGER,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (guild_id, scope, user_id, boss))`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      scope TEXT,
+      boss TEXT,
+      user_id TEXT,
+      group_id INTEGER,
+      data TEXT)`),
   ]);
 
   // Columnas añadidas después del despliegue inicial.
@@ -360,7 +370,8 @@ export async function syncAllGroups(db, guildId, groupSize) {
 export async function undersizedGroupsGlobal(db, min) {
   const { results } = await db
     .prepare(
-      `SELECT g.id, g.guild_id, g.boss, COUNT(DISTINCT r.user_id) AS n
+      `SELECT g.id, g.guild_id, g.boss, g.scope, g.channel_id, g.message_id,
+              COUNT(DISTINCT r.user_id) AS n
          FROM groups g LEFT JOIN regs r ON r.group_id = g.id
         GROUP BY g.id
        HAVING n < ?`,
@@ -420,6 +431,67 @@ export async function getGroupsBatch(db, guildId, groupIds) {
 export async function allGuildIds(db) {
   const { results } = await db.prepare(`SELECT guild_id FROM guilds`).all();
   return results.map((r) => r.guild_id);
+}
+
+/* ---------- registro de eventos (/log) ---------- */
+
+/**
+ * Deja constancia de algo que ha pasado. `data` es cualquier objeto plano
+ * (kills, llaves, motivo...) — se guarda como JSON, así que el registro
+ * puede crecer sin tener que tocar el esquema cada vez.
+ * Nunca debe tumbar el flujo normal: si falla el log, se traga el error.
+ */
+export async function logEvent(db, guildId, type, { scope, boss, userId, groupId, data } = {}) {
+  try {
+    await db
+      .prepare(
+        `INSERT INTO events (guild_id, created_at, type, scope, boss, user_id, group_id, data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        guildId,
+        Date.now(),
+        type,
+        scope ?? null,
+        boss ?? null,
+        userId ?? null,
+        groupId ?? null,
+        data ? JSON.stringify(data) : null,
+      )
+      .run();
+  } catch (err) {
+    console.error("No se pudo registrar el evento", type, err.message);
+  }
+}
+
+/**
+ * Eventos de un servidor desde `sinceMs`, más recientes primero, con tope
+ * `limit` (Discord no admite mensajes infinitos). Devuelve también el
+ * total real, para poder avisar de "hay más de los que caben aquí".
+ */
+export async function recentEvents(db, guildId, sinceMs, limit = 40) {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM events WHERE guild_id=? AND created_at >= ?
+         ORDER BY created_at DESC LIMIT ?`,
+    )
+    .bind(guildId, sinceMs, limit)
+    .all();
+
+  const total = await db
+    .prepare(`SELECT COUNT(*) AS n FROM events WHERE guild_id=? AND created_at >= ?`)
+    .bind(guildId, sinceMs)
+    .first();
+
+  return {
+    eventos: results.map((r) => ({ ...r, data: r.data ? JSON.parse(r.data) : null })),
+    total: total.n,
+  };
+}
+
+/** Borra eventos de más de `maxAgeMs`, para que la tabla no crezca sin fin. */
+export async function pruneEvents(db, maxAgeMs) {
+  await db.prepare(`DELETE FROM events WHERE created_at < ?`).bind(Date.now() - maxAgeMs).run();
 }
 
 export async function openGroups(db, guildId, scope = null) {
@@ -570,8 +642,8 @@ export async function resyncGroup(db, guildId, groupId, groupSize) {
 export async function wipeScope(db, guildId, scope) {
   // Un grupo puede mezclar gente de diario y de semanal: se borran los
   // registros del ámbito y solo caen los grupos que se quedan sin nadie.
-  await db.batch([
-    db.prepare(`DELETE FROM regs WHERE guild_id=? AND scope=?`).bind(guildId, scope),
+  const [borrado] = await db.batch([
+    db.prepare(`DELETE FROM regs WHERE guild_id=? AND scope=? RETURNING user_id, boss`).bind(guildId, scope),
     db
       .prepare(
         `DELETE FROM groups
@@ -580,6 +652,7 @@ export async function wipeScope(db, guildId, scope) {
       )
       .bind(guildId),
   ]);
+  return borrado?.results ?? [];
 }
 
 /**
@@ -599,14 +672,15 @@ export async function applyResets(db, guildId = null) {
 
   for (const g of results) {
     const scopes = [];
+    const afectados = {};
     if (g.daily_period !== dk) scopes.push("daily");
     if (g.weekly_period !== wk) scopes.push("weekly");
-    for (const s of scopes) await wipeScope(db, g.guild_id, s);
+    for (const s of scopes) afectados[s] = await wipeScope(db, g.guild_id, s);
     await db
       .prepare(`UPDATE guilds SET daily_period=?, weekly_period=? WHERE guild_id=?`)
       .bind(dk, wk, g.guild_id)
       .run();
-    out.push({ guildId: g.guild_id, scopes, announceChannelId: g.announce_channel_id });
+    out.push({ guildId: g.guild_id, scopes, afectados, announceChannelId: g.announce_channel_id });
   }
   return out;
 }

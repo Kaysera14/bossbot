@@ -128,6 +128,19 @@ const commands = [
 		description: "[Admin] Publica el mensaje con botones en este canal",
 	},
 	{
+		name: "log",
+		description: "[Admin] Descarga el registro de actividad como archivo",
+		options: [
+			{
+				name: "horas",
+				description: "Cuántas horas hacia atrás (por defecto 24)",
+				type: INTEGER,
+				min_value: 1,
+				max_value: 720,
+			},
+		],
+	},
+	{
 		name: "configurar",
 		description: "[Admin] Configura el canal de anuncios y roles admin",
 		default_member_permissions: MANAGE_GUILD,

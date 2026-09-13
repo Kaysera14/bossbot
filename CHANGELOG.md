@@ -12,6 +12,31 @@ _(aquí se irán añadiendo las entradas de lo que pidas a partir de ahora)_
 
 ---
 
+## 2026-09-13 — Grupos que desaparecían sin avisar + /log completo
+
+### Corregido
+
+- Bug real reportado: cuando un grupo se quedaba con menos gente del
+  mínimo (típicamente un grupo mixto viejo donde el reset diario se lleva
+  solo a parte de sus miembros), el barrido de seguridad del cron lo
+  disolvía en completo silencio cada 10 minutos. Ahora avisa en el canal
+  antes de borrar el mensaje, explicando por qué se ha deshecho.
+
+### Añadido
+
+- `/log [horas]`: descarga como archivo .txt todo lo que ha pasado en el
+  servidor (registros, grupos formados/completados con quién abre cuántas
+  puertas, salidas, expulsiones, resets, disoluciones) en las últimas N
+  horas (24 por defecto). Sin límite de tamaño real, a diferencia de un
+  mensaje de Discord.
+- Tabla `events` con un registro de cada acción relevante del bot.
+  Autolimpieza de eventos de más de 30 días en el cron.
+
+### Notas de despliegue
+
+- Sin migración manual (autorreparable). Comando nuevo: hace falta
+  `npm run commands` además del deploy.
+
 ## 2026-09-08 — El título de un grupo en /grupo mentía según quién mirara
 
 ### Corregido

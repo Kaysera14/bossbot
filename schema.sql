@@ -41,3 +41,21 @@ CREATE TABLE IF NOT EXISTS regs (
 CREATE INDEX IF NOT EXISTS idx_regs_pool  ON regs (guild_id, scope, boss, group_id);
 CREATE INDEX IF NOT EXISTS idx_regs_group ON regs (group_id);
 CREATE INDEX IF NOT EXISTS idx_regs_user  ON regs (guild_id, user_id);
+
+-- Registro de todo lo que le pasa a un grupo o a una persona, para el
+-- comando /log. `data` es JSON suelto (kills, llaves, motivo...) para no
+-- tener que ir añadiendo columnas cada vez que se quiere guardar un dato
+-- nuevo de un evento.
+CREATE TABLE IF NOT EXISTS events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT    NOT NULL,
+  created_at INTEGER NOT NULL,
+  type       TEXT    NOT NULL,
+  scope      TEXT,
+  boss       TEXT,
+  user_id    TEXT,
+  group_id   INTEGER,
+  data       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_guild_time ON events (guild_id, created_at);

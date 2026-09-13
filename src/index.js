@@ -35,10 +35,12 @@ import {
 	postMessage,
 	editMessage,
 	deleteMessage,
+	sendFollowupFile,
 	opts,
 	userId,
 	isAdmin,
 } from "./discord.js";
+import { fechaLegible } from "./time.js";
 
 /* ---------- emparejar, anunciar, disolver ---------- */
 
@@ -106,6 +108,14 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 			// Se resincroniza siempre, entre gente o no: así un grupo que ya estaba
 			// lleno (por ejemplo creado por una versión anterior) acaba cerrándose.
 			const res = await db.resyncGroup(env.DB, guildId, group.id, GROUP_SIZE);
+			for (const c of elegidos) {
+				await db.logEvent(env.DB, guildId, "union", {
+					scope: c.scope,
+					boss: c.boss,
+					userId: c.userId,
+					groupId: group.id,
+				});
+			}
 			if (elegidos.length) {
 				ampliados.push({
 					id: group.id,
@@ -132,6 +142,30 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 				});
 			}
 			nuevos.push(creado);
+			await db.logEvent(env.DB, guildId, "grupo_formado", {
+				scope: g.members.length && miembros[0]?.scope,
+				boss: g.boss,
+				groupId: creado.id,
+				data: { miembros: miembros.map((r) => r.userId) },
+			});
+			if (g.members.length >= GROUP_SIZE) {
+				// Nace ya lleno (varias personas se registraron a la vez): esto
+				// también cuenta como "grupo completo" para el log, aunque no
+				// pase por la detección de arriba (esa solo mira grupos que YA
+				// existían abiertos y se han cerrado, no los recién nacidos).
+				const plan = keyPlan(miembros, g.runs);
+				await db.logEvent(env.DB, guildId, "grupo_completo", {
+					scope: miembros[0]?.scope,
+					boss: g.boss,
+					groupId: creado.id,
+					data: {
+						runs: g.runs,
+						keys: g.keys,
+						miembros: miembros.map((r) => ({ userId: r.userId, need: r.need, keys: r.keys, support: r.support })),
+						abre: plan.map((p) => ({ userId: p.userId, use: p.use })),
+					},
+				});
+			}
 			pool = pool.filter((r) => !miembros.includes(r));
 		}
 	}
@@ -142,6 +176,27 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 	const completados = (await db.allGroups(env.DB, guildId))
 		.filter((g) => g.closed && abiertosAntes.has(g.id) && !idsNuevos.has(g.id))
 		.map((g) => g.id);
+
+	// El log se registra siempre, tenga o no canal de avisos configurado
+	// (son dos cosas distintas: uno es para el clan, el otro es para /log).
+	for (const groupId of completados) {
+		const gc = await db.getGroup(env.DB, guildId, groupId);
+		if (!gc) continue;
+		const regsC = dedupePool(gc.regs);
+		const { runs, keys } = groupStats(regsC);
+		const plan = keyPlan(regsC, runs);
+		await db.logEvent(env.DB, guildId, "grupo_completo", {
+			scope: gc.group.scope,
+			boss: gc.group.boss,
+			groupId,
+			data: {
+				runs,
+				keys,
+				miembros: regsC.map((r) => ({ userId: r.userId, need: r.need, keys: r.keys, support: r.support })),
+				abre: plan.map((p) => ({ userId: p.userId, use: p.use })),
+			},
+		});
+	}
 
 	const { announceChannelId } = await db.getConfig(env.DB, guildId);
 	if (!announceChannelId) return nuevos;
@@ -266,6 +321,12 @@ export async function registrar(env, guildId, uid, scope, boss, need, keys, ctx)
 		keys,
 		support,
 	});
+	await db.logEvent(env.DB, guildId, "registro", {
+		scope,
+		boss,
+		userId: uid,
+		data: { need, keys, support },
+	});
 
 	const linea = support
 		? T.registradoApoyo(boss, SCOPES[scope].label, keys)
@@ -294,6 +355,15 @@ export async function registrar(env, guildId, uid, scope, boss, need, keys, ctx)
 async function salirDeTodo(env, guildId, uid, ctx) {
 	const borrados = await db.removeAllRegs(env.DB, guildId, uid);
 	if (!borrados.length) return T.NO_APUNTADO_A_NADA;
+
+	for (const r of borrados) {
+		await db.logEvent(env.DB, guildId, "fuera", {
+			scope: r.scope,
+			boss: r.boss,
+			userId: uid,
+			groupId: r.groupId ?? undefined,
+		});
+	}
 
 	const grupos = [...new Set(borrados.map((r) => r.groupId).filter(Boolean))];
 
@@ -384,6 +454,12 @@ async function cmdQuitar(i, env, ctx) {
 		o.jefe,
 	);
 	if (!res) return reply(T.NO_TENIAS_NADA_AHI);
+	await db.logEvent(env.DB, i.guild_id, "quitar_comando", {
+		scope: o.ambito,
+		boss: o.jefe,
+		userId: userId(i),
+		groupId: res.groupId ?? undefined,
+	});
 
 	ctx.waitUntil(
 		(async () => {
@@ -560,6 +636,14 @@ async function onAdminButton(i, env) {
 	}
 
 	const grupos = await db.dissolveAllGroups(env.DB, i.guild_id);
+	for (const g of grupos) {
+		await db.logEvent(env.DB, i.guild_id, "borrado_admin", {
+			scope: g.scope,
+			boss: g.boss,
+			groupId: g.id,
+			data: { por: userId(i) },
+		});
+	}
 
 	// Marca los mensajes de los grupos deshechos
 	for (const g of grupos) {
@@ -597,6 +681,13 @@ async function cmdExpulsar(i, env, ctx) {
 
 	const borrados = await db.removeUserFromGroup(env.DB, i.guild_id, groupId, objetivo);
 	if (!borrados.length) return reply(T.expulsarNoEstabaEnGrupo(objetivo, groupId));
+	await db.logEvent(env.DB, i.guild_id, "expulsado", {
+		scope: borrados[0]?.scope,
+		boss: g.group.boss,
+		userId: objetivo,
+		groupId,
+		data: { por: userId(i) },
+	});
 
 	ctx.waitUntil(
 		(async () => {
@@ -614,6 +705,98 @@ async function cmdExpulsar(i, env, ctx) {
 	);
 
 	return reply(T.expulsarConfirmacion(objetivo, groupId));
+}
+
+/**
+ * Convierte un evento en una línea legible para el archivo de /log.
+ * Cada tipo de evento tiene su propio formato — es la única función que
+ * hay que tocar si algún día se añade un tipo de evento nuevo.
+ */
+function lineaEvento(ev) {
+	const cuando = fechaLegible(ev.created_at);
+	const boss = BOSSES[ev.boss]?.label ?? ev.boss ?? "?";
+	const ambito = SCOPES[ev.scope]?.label ?? ev.scope ?? "";
+	const g = ev.group_id ? ` #${ev.group_id}` : "";
+	const d = ev.data ?? {};
+
+	switch (ev.type) {
+		case "registro":
+			return `${cuando} — ${ev.user_id} se registró en ${boss} (${ambito}): ${
+				d.support ? "apoyo" : `${d.need} kills`
+			}, ${d.keys} llaves`;
+		case "union":
+			return `${cuando} — ${ev.user_id} se unió al grupo${g} de ${boss} (${ambito})`;
+		case "grupo_formado":
+			return `${cuando} — Grupo${g} formado: ${boss} (${ambito}) — ${(d.miembros ?? []).join(", ")}`;
+		case "grupo_completo": {
+			const abre = (d.abre ?? []).map((a) => `${a.userId} ×${a.use}`).join(", ") || "nadie (sin llaves)";
+			return `${cuando} — Grupo${g} COMPLETO: ${boss} (${ambito}) — runs:${d.runs} llaves:${d.keys} — abre: ${abre}`;
+		}
+		case "quitar_cola":
+			return `${cuando} — ${ev.user_id} se quitó de la cola de ${boss} (${ambito})`;
+		case "quitar_comando":
+			return `${cuando} — ${ev.user_id} se quitó de ${boss} (${ambito}) con /quitar`;
+		case "salida":
+			return `${cuando} — ${ev.user_id} salió del grupo${g} de ${boss} (${ambito})`;
+		case "fuera":
+			return `${cuando} — ${ev.user_id} se quitó de ${boss} (${ambito}) con /fuera`;
+		case "cerrado_manual":
+			return `${cuando} — ${ev.user_id} cerró el grupo${g} de ${boss} (${ambito})`;
+		case "completado_manual":
+			return `${cuando} — ${ev.user_id} marcó completado el grupo${g} de ${boss} (${ambito})`;
+		case "expulsado":
+			return `${cuando} — ${ev.user_id} fue expulsado del grupo${g} de ${boss} (${ambito}) por ${d.por}`;
+		case "borrado_admin":
+			return `${cuando} — Grupo${g} (${boss}, ${ambito}) deshecho con /borrargrupos por ${d.por}`;
+		case "disuelto_poca_gente":
+			return `${cuando} — Grupo${g} (${boss}, ${ambito}) disuelto: se quedó con ${d.n} persona(s)`;
+		case "ameba_auto_completado":
+			return `${cuando} — Grupo${g} (${boss}, ${ambito}) dado por completado tras ${d.horas}h cerrado sin confirmar`;
+		case "reset":
+			return `${cuando} — Reset de ${ambito}: ${d.personas} persona(s) afectadas`;
+		default:
+			return `${cuando} — [${ev.type}] ${JSON.stringify(d)}`;
+	}
+}
+
+async function cmdLog(i, env, ctx) {
+	const cfg = await db.getConfig(env.DB, i.guild_id);
+	if (!isAdmin(i, cfg.adminRoleIds)) return reply(T.SOLO_ADMINS);
+
+	const horas = opts(i).horas ?? 24;
+	const desde = Date.now() - horas * 3600 * 1000;
+
+	// Generar el archivo puede tardar un poco (muchos eventos, adjuntar el
+	// fichero): se responde diferido y el archivo llega después, en vez de
+	// arriesgarse a que Discord dé timeout esperando la respuesta directa.
+	ctx.waitUntil(
+		(async () => {
+			const { eventos, total } = await db.recentEvents(env.DB, i.guild_id, desde, 5000);
+			const lineas = [...eventos].reverse().map(lineaEvento); // más antiguo primero
+
+			const cabecera = [
+				`Registro de actividad — últimas ${horas}h`,
+				`Generado: ${fechaLegible(Date.now())}`,
+				`Eventos: ${total}`,
+				"=".repeat(40),
+				"",
+			].join("\n");
+
+			const texto = total
+				? cabecera + lineas.join("\n")
+				: cabecera + "No ha pasado nada registrado en ese periodo.";
+
+			await sendFollowupFile(
+				i.application_id,
+				i.token,
+				`log-${i.guild_id}-${Date.now()}.txt`,
+				texto,
+				`📋 Registro de las últimas ${horas}h (${total} evento${total === 1 ? "" : "s"}).`,
+			);
+		})(),
+	);
+
+	return json({ type: CallbackType.DEFERRED_MESSAGE, data: { flags: 64 } });
 }
 
 async function cmdReset(i, env) {
@@ -693,6 +876,7 @@ async function onStatusButton(i, env, ctx) {
 	if (action === "cancel") {
 		const [, , scope, boss] = partes;
 		await db.removeReg(env.DB, gid, scope, uid, boss);
+		await db.logEvent(env.DB, gid, "quitar_cola", { scope, boss, userId: uid });
 		const { embed, components } = await verMiSituacion(env, gid, uid);
 		return updateMessage({ embeds: [embed], components });
 	}
@@ -712,11 +896,29 @@ async function onStatusButton(i, env, ctx) {
 				closed: true,
 				locked: true,
 			});
+			await db.logEvent(env.DB, gid, "cerrado_manual", {
+				scope: g.group.scope,
+				boss: g.group.boss,
+				groupId,
+				userId: uid,
+			});
 		} else if (action === "done") {
 			await db.completeGroup(env.DB, gid, groupId);
+			await db.logEvent(env.DB, gid, "completado_manual", {
+				scope: g.group.scope,
+				boss: g.group.boss,
+				groupId,
+				userId: uid,
+			});
 		} else if (action === "leave") {
 			await db.removeUserBoss(env.DB, gid, uid, g.group.boss);
 			await db.resyncGroup(env.DB, gid, groupId, GROUP_SIZE);
+			await db.logEvent(env.DB, gid, "salida", {
+				scope: g.group.scope,
+				boss: g.group.boss,
+				groupId,
+				userId: uid,
+			});
 		}
 
 		ctx.waitUntil(
@@ -797,6 +999,7 @@ const COMANDOS = {
 	quitar: cmdQuitar,
 	borrargrupos: cmdBorrarGrupos,
 	expulsar: cmdExpulsar,
+	log: cmdLog,
 	panel: cmdPanel,
 	configurar: cmdConfigurar,
 	emparejar: cmdEmparejar,
@@ -858,6 +1061,9 @@ export default {
 	async scheduled(event, env, ctx) {
 		await db.ensureSchema(env.DB);
 
+		// El registro de /log no necesita guardar más de unas semanas.
+		await db.pruneEvents(env.DB, 30 * 24 * 3600 * 1000);
+
 		// Barrido de exactitud, cada 10 minutos, para todos los servidores.
 		// Antes esto se hacía en CADA registro (dentro de matchAndAnnounce),
 		// lo cual era caro con un servidor activo: con muchos grupos ya
@@ -869,11 +1075,29 @@ export default {
 		}
 
 		// Red de seguridad: grupos por debajo del mínimo que se hayan quedado
-		// sueltos por cualquier motivo (datos antiguos, un camino no cubierto).
+		// sueltos por cualquier motivo (datos antiguos, un camino no cubierto,
+		// o el reset de arriba dejando huérfano a alguien de un grupo mixto).
 		// Los tres caminos normales de salida ya los disuelven al momento; esto
-		// es solo un barrido de respaldo.
+		// es solo un barrido de respaldo — pero antes lo hacía en SILENCIO, y
+		// eso es justo lo que hacía que "desapareciera gente sin decir nada".
 		for (const g of await db.undersizedGroupsGlobal(env.DB, MIN_GROUP_SIZE)) {
 			await db.dissolveGroup(env.DB, g.guild_id, g.id);
+			await db.logEvent(env.DB, g.guild_id, "disuelto_poca_gente", {
+				scope: g.scope,
+				boss: g.boss,
+				groupId: g.id,
+				data: { n: g.n },
+			});
+			if (g.channel_id && g.message_id) {
+				ctx.waitUntil(
+					(async () => {
+						await sendMessage(env.DISCORD_TOKEN, g.channel_id, {
+							content: T.grupoDisueltoPocaGenteTexto(g.id, BOSSES[g.boss]?.label ?? g.boss, g.n),
+						});
+						await deleteMessage(env.DISCORD_TOKEN, g.channel_id, g.message_id);
+					})(),
+				);
+			}
 		}
 
 		// Grupos "ameba": cerrados hace mucho y nunca marcados como Completado.
@@ -888,6 +1112,12 @@ export default {
 		for (const g of rancios) {
 			const horas = g.scope === "daily" ? STALE_CLOSED_HOURS : STALE_CLOSED_WEEKLY_HOURS;
 			await db.completeGroup(env.DB, g.guild_id, g.id);
+			await db.logEvent(env.DB, g.guild_id, "ameba_auto_completado", {
+				scope: g.scope,
+				boss: g.boss,
+				groupId: g.id,
+				data: { horas },
+			});
 			if (g.channel_id && g.message_id) {
 				ctx.waitUntil(
 					(async () => {
@@ -906,8 +1136,15 @@ export default {
 		for (const {
 			guildId,
 			scopes,
+			afectados,
 			announceChannelId,
 		} of await db.applyResets(env.DB)) {
+			for (const s of scopes) {
+				await db.logEvent(env.DB, guildId, "reset", {
+					scope: s,
+					data: { personas: afectados[s]?.length ?? 0 },
+				});
+			}
 			// Un grupo mixto sobrevive al reset diario con sus miembros semanales:
 			// hay que recalcular runs, llaves y si sigue lleno.
 			await db.syncAllGroups(env.DB, guildId, GROUP_SIZE);

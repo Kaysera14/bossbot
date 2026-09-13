@@ -297,6 +297,9 @@ export const resetAutomaticoTexto = (nombresAmbitos) =>
 	`🔄 Reset de ${nombresAmbitos}: a apuntarse otra vez con el botón "Me faltan jefes".`;
 export const grupoAmebaTexto = (groupId, bossLabel, horas) =>
 	`⌛ Grupo #${groupId} (${bossLabel}) llevaba más de ${horas}h cerrado sin completarse: dado por hecho automáticamente.`;
+export const grupoDisueltoPocaGenteTexto = (groupId, bossLabel, n) =>
+	`💨 Grupo #${groupId} (${bossLabel}) se ha deshecho: se quedó con solo ${n} persona${n === 1 ? "" : "s"} ` +
+	`(el mínimo es 2). Quien quedara dentro vuelve a la cola.`;
 
 // ---------------------------------------------------------------------------
 // Genéricos: errores, permisos, botones desconocidos.

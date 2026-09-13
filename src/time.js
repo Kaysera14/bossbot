@@ -64,3 +64,10 @@ export function nextDailyReset(now = new Date()) {
 
 export const discordTime = (ms, style = "R") =>
   `<t:${Math.floor(ms / 1000)}:${style}>`;
+
+/** Fecha legible en texto plano ("13/09 02:15"), para el archivo de /log. */
+export function fechaLegible(ms) {
+  const p = partsIn(new Date(ms), TIMEZONE);
+  const dos = (n) => String(n).padStart(2, "0");
+  return `${dos(p.d)}/${dos(p.m)} ${dos(p.hh)}:${dos(p.mi)}`;
+}

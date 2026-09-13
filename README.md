@@ -156,6 +156,7 @@ Los mismos, por si alguien prefiere teclear:
 | `/borrargrupos` | *(Admin)* Deshace todos los grupos; la gente vuelve a la cola |
 | `/reset ambito` | *(Admin)* Borra registros y grupos a mano |
 | `/expulsar usuario grupo` | *(Admin)* Saca a alguien de un grupo concreto; el hueco se libera y se rellena solo |
+| `/log [horas]` | *(Admin)* Descarga un archivo .txt con todo lo que ha pasado (registros, grupos, expulsiones, resets...) en las últimas N horas (24 por defecto) |
 
 ## El panel se mantiene solo
 
@@ -175,6 +176,16 @@ Dos redes de seguridad corren en cada pasada del cron:
 - **Grupos por debajo del mínimo**: si un grupo se queda con menos gente de
   la cuenta (normalmente ya lo disuelven al momento los botones de salir),
   este barrido pilla cualquier resto suelto.
+
+## Registro de actividad (/log)
+
+Cada acción relevante (alguien se registra, un grupo se forma o se completa
+—con quién abre cuántas puertas—, alguien sale o es expulsado, un reset
+borra a X personas, un grupo se disuelve por quedarse corto de gente...) se
+guarda en una tabla `events`. `/log [horas]` lo manda como archivo `.txt`
+adjunto, sin límite de tamaño real (a diferencia de un mensaje de Discord,
+que se corta a los ~2000 caracteres). Los eventos de más de 30 días se
+limpian solos en el cron.
 
 ## Diario y semanal van por separado
 
