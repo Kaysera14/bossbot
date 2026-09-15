@@ -98,7 +98,7 @@ export async function matchAndAnnounce(env, guildId, ctx = null) {
 			);
 
 			for (const c of elegidos) {
-				await db.addToGroup(env.DB, guildId, group.id, c.userId, c.boss);
+				await db.addToGroup(env.DB, guildId, c.scope, group.id, c.userId, c.boss);
 				// Fuera de la bolsa TODOS sus registros de ese jefe, no solo uno.
 				pool = pool.filter(
 					(r) => !(r.userId === c.userId && r.boss === c.boss),

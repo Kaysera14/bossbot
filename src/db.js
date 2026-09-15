@@ -527,10 +527,10 @@ export async function openGroups(db, guildId, scope = null) {
  * Mete a alguien en un grupo. Marca TODOS sus registros de ese jefe (diario y
  * semanal), porque es una sola persona ocupando un solo hueco.
  */
-export async function addToGroup(db, guildId, groupId, userId, boss) {
+export async function addToGroup(db, guildId, scope, groupId, userId, boss) {
   await db
-    .prepare(`UPDATE regs SET group_id=? WHERE guild_id=? AND user_id=? AND boss=?`)
-    .bind(groupId, guildId, userId, boss)
+    .prepare(`UPDATE regs SET group_id=? WHERE guild_id=? AND scope=? AND user_id=? AND boss=?`)
+    .bind(groupId, guildId, scope, userId, boss)
     .run();
 }
 

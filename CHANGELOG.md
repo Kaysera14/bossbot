@@ -12,6 +12,25 @@ _(aquí se irán añadiendo las entradas de lo que pidas a partir de ahora)_
 
 ---
 
+## 2026-09-14 — addToGroup mezclaba ámbitos al rellenar un grupo abierto
+
+### Corregido
+
+- Bug real reportado: rellenar un grupo YA ABIERTO con una persona nueva
+  (`addToGroup`) filtraba solo por persona+jefe, sin mirar el ámbito —a
+  diferencia de `createGroup`, arreglado hace tiempo para el mismo problema
+  al CREAR un grupo. Si alguien tenía el mismo jefe a diario y a semanal, su
+  fila del ámbito que no tocaba se colaba en el grupo equivocado, con sus
+  mismas llaves intactas ("Wondo se ha movido de sus medusas semanales a un
+  grupo de diarias con la misma cantidad de llaves").
+- Test de regresión verificado de la forma más estricta: se comprobó que
+  falla sin el arreglo (el grupo acababa con 4 filas en vez de 3) y que
+  pasa con él puesto, antes de darlo por bueno.
+
+### Notas de despliegue
+
+- Sin migración, sin registrar comandos. Solo `npm test` + `npm run deploy`.
+
 ## 2026-09-13 — Grupos que desaparecían sin avisar + /log completo
 
 ### Corregido

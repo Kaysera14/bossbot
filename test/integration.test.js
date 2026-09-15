@@ -934,4 +934,41 @@ assert.equal(limitado.eventos.length, 3, "solo trae 3 aunque haya 10");
 assert.equal(limitado.total, 10, "pero informa de que hay 10 en total, para poder avisar de que se ha recortado");
 console.log("✓ recentEvents recorta pero informa del total real");
 
+/* --- 34. addToGroup: rellenar un grupo abierto no se lleva la fila del otro ámbito --- */
+
+await db.dissolveAllGroups(DB, G);
+await DB.prepare("DELETE FROM regs").run();
+
+// Primero se abre el grupo diario con D2 y D3 (sin nadie de doble ámbito
+// de por medio: esto pasa por createGroup, que ya estaba arreglado).
+await db.upsertReg(DB, G, "daily", { userId: "D2", boss: "medusa", need: 1, keys: 1 });
+await db.upsertReg(DB, G, "daily", { userId: "D3", boss: "medusa", need: 1, keys: 1 });
+await matchAndAnnounce(env, G);
+
+const gDiario = await DB.prepare("SELECT * FROM groups WHERE boss='medusa' AND scope='daily'").first();
+assert.ok(gDiario, "se abre el grupo diario con D2 y D3");
+assert.equal(gDiario.closed, 0, "abierto, con hueco para un tercero");
+
+// Ahora se registra Doble, que tiene Medusa tanto a diario como a semanal.
+// Su fila DIARIA es la que debe entrar a rellenar el hueco (vía addToGroup,
+// que es la ruta con el bug); su fila SEMANAL debe quedarse intacta en cola.
+await db.upsertReg(DB, G, "weekly", { userId: "Doble", boss: "medusa", need: 40, keys: 7 });
+await db.upsertReg(DB, G, "daily", { userId: "Doble", boss: "medusa", need: 1, keys: 7 });
+await matchAndAnnounce(env, G);
+
+const gDiarioTrasRellenar = await DB.prepare("SELECT * FROM groups WHERE id=?").bind(gDiario.id).first();
+assert.equal(gDiarioTrasRellenar.closed, 1, "el grupo diario se completa con Doble");
+
+const filasGrupoDiario = (
+  await DB.prepare("SELECT user_id, scope FROM regs WHERE group_id=?").bind(gDiario.id).all()
+).results;
+assert.equal(filasGrupoDiario.length, 3, "el grupo diario tiene exactamente 3 filas");
+assert.ok(filasGrupoDiario.every((r) => r.scope === "daily"), "las 3 son diarias: ninguna semanal se ha colado");
+
+const filaSemanalDespues = await DB.prepare(
+  "SELECT group_id FROM regs WHERE user_id='Doble' AND scope='weekly'",
+).first();
+assert.equal(filaSemanalDespues.group_id, null, "la fila semanal de Doble SIGUE libre en cola, no se movió");
+console.log("✓ rellenar un grupo abierto (addToGroup) no arrastra la fila del otro ámbito de la misma persona");
+
 console.log("\nTodo OK");
