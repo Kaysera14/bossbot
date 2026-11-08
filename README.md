@@ -2,7 +2,7 @@
 
 Empareja gente del clan para los jefes del Valle de los Dioses según los jefes
 que necesitan y las llaves que tienen. Diarios y semanales, con reset
-automático a las 02:00 hora española.
+automático a las 00:00 UTC (01:00 en invierno / 02:00 en verano en España).
 
 Corre entero en el plan gratuito de Cloudflare: sin servidor, sin proceso que
 mantener vivo, sin factura mensual.
@@ -259,7 +259,7 @@ src/
   matchmaker.js  Emparejamiento (funciones puras, testeables)
   ui.js          Embeds y botones como objetos planos
   panel.js       Panel fijo, desplegable de jefes y modal
-  time.js        Periodos de reset con la hora española
+  time.js        Periodos de reset (00:00 UTC)
   config.js      Jefes, llaves y tamaño de grupo
 ```
 

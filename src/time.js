@@ -1,4 +1,4 @@
-import { TIMEZONE, RESET_HOUR } from "./config.js";
+import { RESET_TIMEZONE, DISPLAY_TIMEZONE, RESET_HOUR } from "./config.js";
 
 function partsIn(date, timeZone) {
   const dtf = new Intl.DateTimeFormat("en-US", {
@@ -26,12 +26,12 @@ function partsIn(date, timeZone) {
 }
 
 /**
- * "Día de juego": el día natural en España desplazado RESET_HOUR horas.
- * Antes de las 02:00 seguimos contando como el día anterior.
+ * "Día de juego": el día natural en UTC desplazado RESET_HOUR horas.
+ * Con RESET_HOUR = 0 es simplemente el día UTC (reset a las 00:00 UTC).
  */
 function gameDate(now = new Date()) {
   const shifted = new Date(now.getTime() - RESET_HOUR * 3600000);
-  return partsIn(shifted, TIMEZONE);
+  return partsIn(shifted, RESET_TIMEZONE);
 }
 
 export function dailyPeriodKey(now = new Date()) {
@@ -39,7 +39,7 @@ export function dailyPeriodKey(now = new Date()) {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-/** Clave ISO de semana (los lunes a las 02:00 empieza una nueva). */
+/** Clave ISO de semana (los lunes a las 00:00 UTC empieza una nueva). */
 export function weeklyPeriodKey(now = new Date()) {
   const { y, m, d } = gameDate(now);
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -52,7 +52,7 @@ export function weeklyPeriodKey(now = new Date()) {
 
 /** Timestamp (ms) del próximo reset diario. */
 export function nextDailyReset(now = new Date()) {
-  const p = partsIn(now, TIMEZONE);
+  const p = partsIn(now, RESET_TIMEZONE);
   const nowFloor = Math.floor(now.getTime() / 60000) * 60000;
   let target = Date.UTC(p.y, p.m - 1, p.d, RESET_HOUR, 0, 0);
   // corrige el offset de la zona horaria
@@ -67,7 +67,7 @@ export const discordTime = (ms, style = "R") =>
 
 /** Fecha legible en texto plano ("13/09 02:15"), para el archivo de /log. */
 export function fechaLegible(ms) {
-  const p = partsIn(new Date(ms), TIMEZONE);
+  const p = partsIn(new Date(ms), DISPLAY_TIMEZONE);
   const dos = (n) => String(n).padStart(2, "0");
   return `${dos(p.d)}/${dos(p.m)} ${dos(p.hh)}:${dos(p.mi)}`;
 }
