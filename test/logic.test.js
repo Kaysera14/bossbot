@@ -113,16 +113,24 @@ console.log("✓ ampliación de grupos abiertos");
 
 /* ---- tiempo ---- */
 
-assert.equal(dailyPeriodKey(new Date("2026-07-20T23:30:00Z")), "2026-07-20", "01:30 en España = día anterior");
-assert.equal(dailyPeriodKey(new Date("2026-07-21T01:00:00Z")), "2026-07-21", "03:00 en España = día nuevo");
+// Reset a las 00:00 UTC, igual en verano e invierno
+assert.equal(dailyPeriodKey(new Date("2026-07-20T23:59:59Z")), "2026-07-20", "23:59:59 UTC = mismo día");
+assert.equal(dailyPeriodKey(new Date("2026-07-21T00:00:00Z")), "2026-07-21", "00:00 UTC = día nuevo");
+assert.equal(dailyPeriodKey(new Date("2026-01-14T23:59:59Z")), "2026-01-14", "invierno: 23:59:59 UTC = mismo día");
+assert.equal(dailyPeriodKey(new Date("2026-01-15T00:00:00Z")), "2026-01-15", "invierno: 00:00 UTC = día nuevo");
+// Semana: domingo 23:59:59 UTC -> lunes 00:00 UTC
+assert.equal(weeklyPeriodKey(new Date("2026-07-19T23:59:59Z")), weeklyPeriodKey(new Date("2026-07-13T12:00:00Z")), "el domingo sigue en la semana anterior");
 assert.notEqual(
-  weeklyPeriodKey(new Date("2026-07-19T23:00:00Z")),
-  weeklyPeriodKey(new Date("2026-07-20T01:00:00Z")),
-  "el lunes a las 02:00 cambia la semana"
+  weeklyPeriodKey(new Date("2026-07-19T23:59:59Z")),
+  weeklyPeriodKey(new Date("2026-07-20T00:00:00Z")),
+  "el lunes a las 00:00 UTC cambia la semana"
 );
-// En invierno España va en UTC+1: el corte son las 01:00 UTC
-assert.equal(dailyPeriodKey(new Date("2026-01-15T00:30:00Z")), "2026-01-14", "el horario de invierno también cuadra");
-console.log("✓ periodos de reset correctos (verano e invierno)");
+assert.equal(weeklyPeriodKey(new Date("2026-07-20T00:00:00Z")), weeklyPeriodKey(new Date("2026-07-26T23:59:59Z")), "la semana dura hasta el domingo 23:59 UTC");
+// nextDailyReset cae siempre en 00:00:00 UTC
+const nr = new Date(nextDailyReset(new Date("2026-07-20T13:45:00Z")));
+assert.equal(nr.toISOString(), "2026-07-21T00:00:00.000Z", "próximo reset = 00:00 UTC");
+assert.equal(new Date(nextDailyReset(new Date("2026-07-21T00:00:00Z"))).toISOString(), "2026-07-22T00:00:00.000Z", "justo en el reset, el siguiente es mañana");
+console.log("✓ periodos de reset correctos (00:00 UTC)");
 console.log("  próximo reset diario:", new Date(nextDailyReset()).toISOString());
 
 /* ---- permisos y opciones ---- */

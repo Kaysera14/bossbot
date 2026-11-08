@@ -35,7 +35,7 @@ export const panelDescription = () =>
 		"antes siendo menos, cualquiera del grupo puede pulsar 🔒 **Cerrar grupo** (deja de admitir gente,",
 		"pero el grupo sigue existiendo). Cuando ya lo hayáis hecho, pulsad ✅ **Completado** para que",
 		"desaparezca del todo — si no lo pulsáis, el bot lo da por hecho solo pasadas 20 horas cerrado.",
-		"Los diarios se borran a las 02:00 y los semanales los lunes a las 02:00.",
+		"Los diarios se borran a las 00:00 UTC y los semanales los lunes a las 00:00 UTC.",
 	].join("\n");
 
 export const PANEL_BOTON_DIARIO = "Me faltan jefes (diario)";
@@ -143,7 +143,7 @@ export const statusProximoReset = (fecha) => `Próximo reset diario: ${fecha}`;
 export const STATUS_FOOTER_SIN_CANAL =
 	"⚠️ Sin canal de avisos: nadie recibe notificaciones. Que un admin use /configurar";
 export const STATUS_FOOTER_NORMAL =
-	"Los diarios se borran a las 02:00; los semanales, los lunes a las 02:00";
+	"Los diarios se borran a las 00:00 UTC; los semanales, los lunes a las 00:00 UTC";
 
 // ---------------------------------------------------------------------------
 // Vista "Ver abiertas" (ui.js: openRequestsEmbed).

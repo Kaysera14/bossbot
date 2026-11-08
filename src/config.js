@@ -40,10 +40,13 @@ export const MIN_GROUP_SIZE = 2;
 // que hacer 40 runs por esa persona).
 export const MATCH_ACROSS_SCOPES = false;
 
-export const TIMEZONE = "Europe/Madrid";
+// Los resets van en UTC (sin cambio de horario). Zona solo para mostrar fechas
+// legibles en el /log.
+export const RESET_TIMEZONE = "UTC";
+export const DISPLAY_TIMEZONE = "Europe/Madrid";
 
-// Hora del reset (diario todos los días, semanal los lunes).
-export const RESET_HOUR = 2;
+// Hora del reset en RESET_TIMEZONE (diario todos los días, semanal los lunes).
+export const RESET_HOUR = 0;
 
 // El canal de anuncios y los roles admin se configuran por servidor
 // con /configurar, no aquí.
